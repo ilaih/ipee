@@ -1,0 +1,11 @@
+services:
+   flask_web_app_ipee:
+        build: .
+        container_name: flask_web_app_ipee
+        ports:
+            - "5000:5000"
+        volumes:
+            - .:/code
+        environment:
+            - FLASK_APP=run.py
+            - FLASK_ENV=development
