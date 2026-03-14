@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Stream Detector Debug</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<h2>Stream Detector Debug</h2>
+
+<div class="player">
+
+<input type="file" id="videoUpload">
+
+<button id="play">Play</button>
+<button id="pause">Pause</button>
+<button id="restart">Restart</button>
+<button id="step">Step</button>
+<span class="val" style="margin-left:12px">Run <span id="runNum">0</span></span>
+
+</div>
+
+
+<div class="container">
+
+<video id="video"></video>
+<canvas id="canvas"></canvas>
+
+</div>
+
+<h3>Algorithm Parameters</h3>
+
+<div class="params">
+
+<label>Motion Threshold <span class="val" id="motionThresholdVal">10</span></label>
+<input type="range" id="motionThreshold" min="5" max="80" value="10" oninput="document.getElementById('motionThresholdVal').textContent=this.value">
+
+<label>Min Cluster Size <span class="val" id="clusterSizeVal">8</span></label>
+<input type="range" id="clusterSize" min="5" max="100" value="8" oninput="document.getElementById('clusterSizeVal').textContent=this.value">
+
+<label>Tracking Distance <span class="val" id="trackingDistVal">100</span></label>
+<input type="range" id="trackingDist" min="5" max="120" value="100" oninput="document.getElementById('trackingDistVal').textContent=this.value">
+
+<label>Frame Skip <span class="val" id="frameSkipVal">1</span></label>
+<input type="range" id="frameSkip" min="1" max="5" value="1" oninput="document.getElementById('frameSkipVal').textContent=this.value">
+
+<label>Memory Radius <span class="val" id="memoryRadiusVal">70</span></label>
+<input type="range" id="memoryRadius" min="20" max="150" value="70" oninput="document.getElementById('memoryRadiusVal').textContent=this.value">
+
+<label>Trail Duration (ms) <span class="val" id="trailDurationVal">1500</span></label>
+<input type="range" id="trailDuration" min="10" max="5000" value="1500" oninput="document.getElementById('trailDurationVal').textContent=this.value">
+
+</div>
+
+<h3>Line Parameters</h3>
+
+<div class="params">
+
+<label>Max Gap Before Ellipse <span class="val" id="maxPointGapBeforeVal">120</span></label>
+<input type="range" id="maxPointGapBefore" min="10" max="300" value="120" oninput="document.getElementById('maxPointGapBeforeVal').textContent=this.value">
+
+<label>Max Gap After Ellipse <span class="val" id="maxPointGapVal">80</span></label>
+<input type="range" id="maxPointGap" min="10" max="300" value="80" oninput="document.getElementById('maxPointGapVal').textContent=this.value">
+
+<label>Max Curve Angle (°) <span class="val" id="maxCurveAngleVal">45</span></label>
+<input type="range" id="maxCurveAngle" min="5" max="85" value="45" oninput="document.getElementById('maxCurveAngleVal').textContent=this.value">
+
+<label><input type="checkbox" id="showPrediction" checked> with prediction</label>
+
+</div>
+
+<h3>Endpoint Estimators</h3>
+
+<div class="debug">
+
+<label><input type="checkbox" id="showEst1" checked> frontier centroid (cyan)</label>
+<label><input type="checkbox" id="showEst2" checked> parabola endpoint (yellow)</label>
+<label><input type="checkbox" id="showEst3" checked> direction projection (red)</label>
+
+</div>
+
+<h3>Debug</h3>
+
+<div class="debug">
+
+<label><input type="checkbox" id="showMotion" checked> motion mask</label>
+<label><input type="checkbox" id="showFunnel" checked> funnel</label>
+<label><input type="checkbox" id="showPoints" checked> stream points</label>
+<label><input type="checkbox" id="showStreamLine" checked> stream line</label>
+<button id="saveLog">Save Log</button>
+
+</div>
+
+<script src="app.js"></script>
+
+</body>
+</html>
