@@ -1,0 +1,41 @@
+body
+{
+font-family: Arial;
+background:#111;
+color:white;
+text-align:center;
+}
+
+.controls
+{
+margin:10px;
+}
+
+.canvasContainer
+{
+position:relative;
+display:inline-block;
+}
+
+video
+{
+display:none;
+}
+
+canvas
+{
+border:1px solid white;
+}
+
+.val
+{
+display:inline-block;
+min-width:38px;
+padding:1px 5px;
+background:#333;
+border-radius:3px;
+font-weight:bold;
+color:#4cf;
+font-size:0.9em;
+text-align:right;
+}
