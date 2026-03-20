@@ -5,6 +5,9 @@ const path  = require("path");
 
 const PORT = 3001;
 
+// Set to true to serve obfuscated build from dist/, false to serve raw source files.
+const SERVE_OBFUSCATED = true;
+
 const MIME = {
     ".html": "text/html",
     ".js":   "application/javascript",
@@ -36,7 +39,7 @@ function handle(req, res) {
     }
 
     const distDir  = path.join(__dirname, 'dist');
-    const baseDir  = fs.existsSync(path.join(distDir, 'cam2.html')) ? distDir : __dirname;
+    const baseDir  = SERVE_OBFUSCATED ? distDir : __dirname;
     const pathname = req.url.split('?')[0];
     let filePath = path.join(baseDir, pathname === "/" ? "/cam2.html" : pathname);
     const ext = path.extname(filePath);
