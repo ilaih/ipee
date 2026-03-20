@@ -1556,3 +1556,5 @@ node_modules/zod-to-json-schema/postesm.ts
 node_modules/zod-to-json-schema/README.md
 node_modules/zod-to-json-schema/.github/CR_logotype-full-color.png
 node_modules/zod-to-json-schema/.github/FUNDING.yml
+certs/cert.pem
+certs/key.pem
