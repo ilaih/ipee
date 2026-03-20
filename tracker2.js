@@ -114,30 +114,48 @@ function _nccAt(normRef, buf, data, cx, cy) {
 
 function _bowlSearch(normRef, buf, data, lx, ly, radius, step) {
     const ph = BOWL_PATCH_HALF
-    let bx = lx, by = ly, best = -2
+    let bx = lx, by = ly, best = -2, anyValid = false
     for (let dy = -radius; dy <= radius; dy += step) {
         for (let dx = -radius; dx <= radius; dx += step) {
             const cx = Math.round(lx + dx), cy = Math.round(ly + dy)
             if (cx - ph < 0 || cx + ph >= W || cy - ph < 0 || cy + ph >= H) continue
+            anyValid = true
             const ncc = _nccAt(normRef, buf, data, cx, cy)
             if (ncc > best) { best = ncc; bx = cx; by = cy }
         }
     }
-    return { x: bx, y: by, ncc: best }
+    return { x: bx, y: by, ncc: best, anyValid }
 }
 
 function _updateTracker(tracker, buf, data) {
     if (!tracker) return
     const { normRef, x: lx, y: ly } = tracker
+    const margin = BOWL_PATCH_HALF + 5   // 5px buffer before patch reaches frame edge
+
+    // Pause when patch centre is too close to any frame edge (prevents edge-drift artefacts)
+    if (lx < margin || lx + margin >= W || ly < margin || ly + margin >= H) {
+        tracker.outOfFrame = true
+        tracker.quality    = 0
+        return
+    }
+
     let res = _bowlSearch(normRef, buf, data, lx, ly, 30, 2)
-    if (res.ncc < 0.6) {
+    let anyValid = res.anyValid
+    if (!anyValid || res.ncc < 0.6) {
         const r2 = _bowlSearch(normRef, buf, data, lx, ly, 70, 3)
-        if (r2.ncc > res.ncc) res = r2
+        if (r2.anyValid) { anyValid = true; if (r2.ncc > res.ncc) res = r2 }
     }
-    if (res.ncc < 0.4) {
+    if (!anyValid || res.ncc < 0.4) {
         const r3 = _bowlSearch(normRef, buf, data, lx, ly, 120, 4)
-        if (r3.ncc > res.ncc) res = r3
+        if (r3.anyValid) { anyValid = true; if (r3.ncc > res.ncc) res = r3 }
     }
+    // All search positions out of frame — pause this tracker until visible again
+    if (!anyValid) {
+        tracker.outOfFrame = true
+        tracker.quality    = 0
+        return
+    }
+    tracker.outOfFrame = false
     if (res.ncc >= BOWL_NCC_MIN) { tracker.x = res.x; tracker.y = res.y }
     tracker.quality = res.ncc
 }
@@ -267,7 +285,7 @@ function getEstimatedCenter() {
     let w = 0, dx = 0, dy = 0
     for (const t of _activeTrackers) {
         const q = t.tracker.quality
-        if (q < TRACKER_MIN_Q) continue
+        if (t.tracker.outOfFrame || q < TRACKER_MIN_Q) continue
         w  += q
         dx += q * (t.tracker.x - t.start.x)
         dy += q * (t.tracker.y - t.start.y)
@@ -289,7 +307,7 @@ function drawTrackerDots(ctx) {
     if (!settings.showTrackers) return
 
     function _dot(tracker, label, group) {
-        if (!tracker) return
+        if (!tracker || tracker.outOfFrame) return
         const q      = tracker.quality
         const fill   = q >= 0.6 ? '#00ffff' : q >= BOWL_NCC_MIN ? '#ffaa00' : '#ff4444'
         const stroke = group === 'inner' ? '#ff44ff' : '#ffee00'
