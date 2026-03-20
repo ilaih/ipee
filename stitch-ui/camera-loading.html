@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>iPee - Initializing</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0ddff2",
+                        "background-light": "#f5f8f8",
+                        "background-dark": "#102122",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        @keyframes scan-line {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        .animate-pulse-ring {
+            animation: pulse-ring 2s ease-in-out infinite;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display overflow-hidden">
+<div class="relative flex h-screen w-full flex-col bg-background-light dark:bg-background-dark">
+<!-- Top App Bar -->
+<div class="flex items-center p-4 justify-between z-10">
+<div class="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start">
+<span class="material-symbols-outlined text-3xl">close</span>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-xl font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-12">iPee</h2>
+</div>
+<!-- Main Content (Camera Simulation) -->
+<div class="flex-1 flex flex-col items-center justify-center px-6">
+<!-- Lens/Scanner Area -->
+<div class="relative flex items-center justify-center w-64 h-64 mb-12">
+<!-- Outer Glow Rings -->
+<div class="absolute inset-0 rounded-full border-2 border-primary/20 animate-pulse-ring"></div>
+<div class="absolute inset-4 rounded-full border-4 border-primary/40 animate-pulse-ring" style="animation-delay: 0.5s;"></div>
+<div class="absolute inset-8 rounded-full border-2 border-primary/60 animate-pulse-ring" style="animation-delay: 1s;"></div>
+<!-- Center Camera Icon Circle -->
+<div class="relative z-10 flex items-center justify-center w-32 h-32 rounded-full bg-background-dark/80 border-2 border-primary shadow-[0_0_30px_rgba(13,223,242,0.4)]">
+<span class="material-symbols-outlined text-primary text-6xl" data-icon="photo_camera">photo_camera</span>
+</div>
+<!-- Scanning Effect Overlays -->
+<div class="absolute w-full h-full rounded-full overflow-hidden opacity-20 pointer-events-none">
+<div class="w-full h-1 bg-primary shadow-[0_0_15px_#0ddff2] animate-[scan-line_3s_linear_infinite]"></div>
+</div>
+</div>
+<!-- Text & Progress -->
+<div class="text-center w-full max-w-xs">
+<h2 class="text-slate-900 dark:text-slate-100 text-2xl font-bold mb-2">Initializing Camera...</h2>
+<!-- Animated Spinner/Dots -->
+<div class="flex items-center justify-center gap-2 mb-8 h-4">
+<div class="w-2 h-2 rounded-full bg-primary animate-bounce" style="animation-delay: 0.1s;"></div>
+<div class="w-2 h-2 rounded-full bg-primary animate-bounce" style="animation-delay: 0.2s;"></div>
+<div class="w-2 h-2 rounded-full bg-primary animate-bounce" style="animation-delay: 0.3s;"></div>
+</div>
+<!-- Custom Progress Bar -->
+<div class="flex flex-col gap-3 mb-6">
+<div class="flex gap-6 justify-between items-end">
+<p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Scanning Environment</p>
+<p class="text-primary text-xs font-bold">42%</p>
+</div>
+<div class="w-full h-1.5 rounded-full bg-primary/10 overflow-hidden">
+<div class="h-full bg-primary rounded-full shadow-[0_0_10px_#0ddff2]" style="width: 42%;"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Guidance -->
+<div class="p-8 text-center bg-gradient-to-t from-background-dark/50 to-transparent">
+<p class="text-slate-500 dark:text-slate-400 text-base font-normal leading-relaxed">
+                Point your camera at the <span class="text-primary font-medium">toilet bowl</span><br/>
+                to begin the analysis.
+            </p>
+</div>
+<!-- Background Image/Texture for "Camera Feed" Look -->
+<div class="fixed inset-0 -z-10 opacity-30 grayscale contrast-125" data-alt="Dark abstract metallic texture simulating a camera sensor noise" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuALEgR78teqS2K94RDVk9MEFLDxiiLbxMW4JQ8UqW6iLPIvVBW1bQHkpZb0xZFpWjr2Qmm4nX0f9ln7L1PtDXKPAGBR0si_m4K6ROUA3wZkwhQykDd4yUnaOFLla0dCatx47C_9SR_sOnG48ZyD31shQgYdBBeH80KpZouo83-jORvCfJweIIlTEW7_585h30va8odbzDVFDIMNW5t8tRU3oN6YCAoVyq9sATGk6yvxph6guQ5uMiO3rqIJPGi2xkZAzrrkeRnk6gaG');">
+</div>
+<!-- Vignette effect -->
+<div class="fixed inset-0 -z-5 pointer-events-none shadow-[inset_0_0_100px_rgba(0,0,0,0.8)]"></div>
+</div>
+</body></html>

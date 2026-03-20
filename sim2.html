@@ -79,6 +79,7 @@ video  { display: none; }
 <script src="stream2.js"></script>
 <script src="shared2.js"></script>
 <script src="water2.js"></script>
+<script src="onboarding.js"></script>
 <script>
 const video  = document.getElementById('video')
 const canvas = document.getElementById('canvas')
@@ -170,7 +171,17 @@ document.getElementById('upload').addEventListener('change', e => {
     video.src = URL.createObjectURL(file)
 })
 
-document.getElementById('playBtn').addEventListener('click', () => video.play())
+let _onboardingDone = false
+document.getElementById('playBtn').addEventListener('click', () => {
+    if (!_onboardingDone && !settings.skipOnboarding) {
+        startOnboarding({
+            skipCameraLoad: true,
+            onDone: () => { _onboardingDone = true; video.play() }
+        })
+    } else {
+        video.play()
+    }
+})
 document.getElementById('pauseBtn').addEventListener('click', () => video.pause())
 document.getElementById('restartBtn').addEventListener('click', () => {
     video.pause()

@@ -87,6 +87,7 @@ video { display: none; }
 <script src="stream2.js"></script>
 <script src="shared2.js"></script>
 <script src="water2.js"></script>
+<script src="onboarding.js"></script>
 <script>
 const video  = document.getElementById('video')
 const canvas = document.getElementById('canvas')
@@ -137,6 +138,8 @@ video.addEventListener('play', () => {
     statusEl.style.display = 'none'
     if (rafId) cancelAnimationFrame(rafId)
     rafId = requestAnimationFrame(camLoop)
+    // Signal onboarding: camera is live → advance from loading screen to level screen (once)
+    if (window._ipeeCameraReady) { window._ipeeCameraReady(); window._ipeeCameraReady = null }
 })
 
 // Pick the main rear camera (1× lens) — same logic as game.html.
@@ -185,6 +188,8 @@ async function startCamera() {
     await video.play()
 }
 
+// Show onboarding overlays, start camera in background behind them.
+startOnboarding()
 startCamera().catch(err => {
     statusEl.textContent = 'Camera error: ' + err.message
     statusEl.style.display = 'block'

@@ -56,6 +56,8 @@ const settings = {
     // Logging
     enableLogging:    false,
     enableDetLog:     false,
+    // Onboarding
+    skipOnboarding:   false,
 }
 
 // ── Settings panel (injected into body) ──────────────────────────────────────
@@ -126,6 +128,7 @@ function initSettingsPanel() {
         ${_check('useWaterFilter','Water Zone Filter')}
 
         ${_sectionHead('Debug')}
+        ${_check('skipOnboarding','Skip Opening Screens')}
         ${_check('showTrackers','Tracking Ellipse + Dots')}
         ${_check('showStreamPoints','Motion Points (green)')}
         ${_check('showDebugStream','Stream Debug Overlay')}
