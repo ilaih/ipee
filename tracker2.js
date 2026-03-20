@@ -40,8 +40,9 @@
 //   resetTrackers()              — full reset; call from _resetCalib()
 
 // ── NCC constants (moved here from shared2.js) ────────────────────────────────
-const BOWL_PATCH_HALF = 18     // half-size of the 36×36 px NCC reference patch
-const BOWL_NCC_MIN    = 0.30   // quality gate — below this, hold last known position
+const BOWL_PATCH_HALF  = 18    // half-size of the 36×36 px NCC reference patch
+const BOWL_NCC_MIN     = 0.30  // quality gate — below this, hold last known position
+const RESUME_NCC_MIN   = 0.50  // higher bar for resuming after out-of-frame pause
 
 // ── Tracking constants ────────────────────────────────────────────────────────
 const COUNTDOWN_MS    = 5000   // ms of candidate evaluation before selection
@@ -59,6 +60,10 @@ let _activeTrackers = []    // [{ tracker, start:{x,y}, label }] — selected 5
 let _refCenter      = null  // { x, y } calibEllipse centre at calibration
 let _countdownStart = null  // Date.now() when countdown began; null = inactive
 let _selectionDone  = false
+
+// ── Tracker position log ──────────────────────────────────────────────────────
+let _trackerBuf   = []   // CSV rows accumulated while logTrackers is enabled
+let _trackerFrame = 0    // frame counter for the log
 
 // ── NCC helpers (ported from shared2.js) ──────────────────────────────────────
 
@@ -127,37 +132,56 @@ function _bowlSearch(normRef, buf, data, lx, ly, radius, step) {
     return { x: bx, y: by, ncc: best, anyValid }
 }
 
-function _updateTracker(tracker, buf, data) {
+function _updateTracker(tracker, buf, data, predX, predY) {
     if (!tracker) return
     const { normRef, x: lx, y: ly } = tracker
     const margin = BOWL_PATCH_HALF + 5   // 5px buffer before patch reaches frame edge
 
-    // Pause when patch centre is too close to any frame edge (prevents edge-drift artefacts)
-    if (lx < margin || lx + margin >= W || ly < margin || ly + margin >= H) {
+    // While actively tracking: freeze early to prevent edge-drift artefacts
+    if (!tracker.outOfFrame &&
+        (lx < margin || lx + margin >= W || ly < margin || ly + margin >= H)) {
         tracker.outOfFrame = true
         tracker.quality    = 0
         return
     }
 
-    let res = _bowlSearch(normRef, buf, data, lx, ly, 30, 2)
-    let anyValid = res.anyValid
-    if (!anyValid || res.ncc < 0.6) {
-        const r2 = _bowlSearch(normRef, buf, data, lx, ly, 70, 3)
-        if (r2.anyValid) { anyValid = true; if (r2.ncc > res.ncc) res = r2 }
+    let res, anyValid
+    if (tracker.outOfFrame && predX !== undefined) {
+        // Guided resume: search ±20px around scene-drift prediction.
+        // If the predicted position is itself off-frame, anyValid stays false → remain frozen.
+        res      = _bowlSearch(normRef, buf, data, predX, predY, 20, 1)
+        anyValid = res.anyValid
+    } else {
+        // Normal active-tracking search (3 adaptive stages)
+        res      = _bowlSearch(normRef, buf, data, lx, ly, 30, 2)
+        anyValid = res.anyValid
+        if (!anyValid || res.ncc < 0.6) {
+            const r2 = _bowlSearch(normRef, buf, data, lx, ly, 70, 3)
+            if (r2.anyValid) { anyValid = true; if (r2.ncc > res.ncc) res = r2 }
+        }
+        if (!anyValid || res.ncc < 0.4) {
+            const r3 = _bowlSearch(normRef, buf, data, lx, ly, 120, 4)
+            if (r3.anyValid) { anyValid = true; if (r3.ncc > res.ncc) res = r3 }
+        }
     }
-    if (!anyValid || res.ncc < 0.4) {
-        const r3 = _bowlSearch(normRef, buf, data, lx, ly, 120, 4)
-        if (r3.anyValid) { anyValid = true; if (r3.ncc > res.ncc) res = r3 }
-    }
-    // All search positions out of frame — pause this tracker until visible again
+
     if (!anyValid) {
         tracker.outOfFrame = true
         tracker.quality    = 0
         return
     }
-    tracker.outOfFrame = false
-    if (res.ncc >= BOWL_NCC_MIN) { tracker.x = res.x; tracker.y = res.y }
-    tracker.quality = res.ncc
+    if (tracker.outOfFrame) {
+        const safe = res.x >= margin && res.x + margin < W &&
+                     res.y >= margin && res.y + margin < H
+        if (res.ncc >= RESUME_NCC_MIN && safe) {
+            tracker.x = res.x; tracker.y = res.y
+            tracker.outOfFrame = false; tracker.quality = res.ncc
+        }
+        // else: stay paused, quality stays 0
+    } else {
+        if (res.ncc >= BOWL_NCC_MIN) { tracker.x = res.x; tracker.y = res.y }
+        tracker.quality = res.ncc
+    }
 }
 
 // ── Internal: select best 4 from the 8 candidates ────────────────────────────
@@ -206,6 +230,35 @@ function resetTrackers() {
     _refCenter      = null
     _countdownStart = null
     _selectionDone  = false
+    _trackerBuf     = []
+    _trackerFrame   = 0
+}
+
+// Fixed label order for the log — always the same columns regardless of which are selected
+// const _LOG_LABELS = ['O0','O1','O2','O3','I0','I1','I2','I3']
+const _LOG_LABELS = ['O2']
+
+// Returns { tracker, start } for a label from whichever pool is active, or null
+function _logEntry(label) {
+    if (_selectionDone) {
+        const t = _activeTrackers.find(t => t.label === label)
+        return t ? { tracker: t.tracker, start: t.start } : null
+    }
+    const c = _candidates.find(c => c.label === label)
+    return c ? { tracker: c.tracker, start: null } : null
+}
+
+function saveTrackerLog() {
+    if (_trackerBuf.length === 0) return
+    const colHdr = _LOG_LABELS.flatMap(l =>
+        [`${l}_x`,`${l}_y`,`${l}_dx`,`${l}_dy`,`${l}_q`,`${l}_oof`]).join(',')
+    const csv  = `frame,t,bombX,bombY,${colHdr}\n` + _trackerBuf.join('\n') + '\n'
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const a    = document.createElement('a')
+    a.href     = URL.createObjectURL(blob)
+    a.download = 'trackers_' + Date.now() + '.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
 }
 
 function initCandidateTrackers(data) {
@@ -269,10 +322,33 @@ function updateTrackers(data) {
             _selectTrackers()
         }
     } else {
-        // Game phase: update only the selected 4
-        for (let i = 0; i < _activeTrackers.length; i++) {
-            _updateTracker(_activeTrackers[i].tracker, _bufs[i], data)
+        // Game phase: compute scene drift for guided resume of off-screen trackers
+        let sceneDx = 0, sceneDy = 0
+        if (_refCenter) {
+            const est = getEstimatedCenter()   // uses only in-frame trackers from previous frame
+            if (est) { sceneDx = est.x - _refCenter.x; sceneDy = est.y - _refCenter.y }
         }
+        for (let i = 0; i < _activeTrackers.length; i++) {
+            const t = _activeTrackers[i]
+            _updateTracker(t.tracker, _bufs[i], data,
+                t.start.x + sceneDx, t.start.y + sceneDy)
+        }
+    }
+
+    // Per-frame tracker position log (off by default; toggle in settings)
+    if (settings.logTrackers) {
+        const bx = bombPos ? bombPos.x.toFixed(1) : ''
+        const by = bombPos ? bombPos.y.toFixed(1) : ''
+        const cols = _LOG_LABELS.map(label => {
+            const e = _logEntry(label)
+            if (!e || !e.tracker) return ',,,,,,'
+            const t  = e.tracker
+            const dx = e.start ? (t.x - e.start.x).toFixed(1) : '0'
+            const dy = e.start ? (t.y - e.start.y).toFixed(1) : '0'
+            return [t.x.toFixed(1), t.y.toFixed(1), dx, dy, t.quality.toFixed(3), t.outOfFrame ? 1 : 0].join(',')
+        })
+        _trackerBuf.push(`${_trackerFrame},${Date.now()},${bx},${by},${cols.join(',')}`)
+        _trackerFrame++
     }
 }
 

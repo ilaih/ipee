@@ -56,6 +56,7 @@ const settings = {
     // Logging
     enableLogging:    false,
     enableDetLog:     false,
+    logTrackers:      false,
     // Onboarding
     skipOnboarding:   false,
 }
@@ -134,9 +135,7 @@ function initSettingsPanel() {
         ${_check('showDebugStream','Stream Debug Overlay')}
         ${_check('enableLogging','Enable Frame Logging')}
         ${_check('enableDetLog','Enable Detector Log')}
-        <button onclick="saveLog()" style="display:block;width:100%;margin-top:8px;
-            padding:10px;background:#1a3a1a;color:#cfc;border:1px solid #484;
-            border-radius:8px;font-size:14px;cursor:pointer">💾 Save Log (CSV)</button>
+        ${_check('logTrackers','Tracker Position Log')}
 
         <button onclick="recalib()" style="display:block;width:100%;margin-top:14px;
             padding:10px;background:#3a1a1a;color:#fcc;border:1px solid #844;

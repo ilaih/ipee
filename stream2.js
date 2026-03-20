@@ -191,7 +191,7 @@ function saveDetLog() {
     URL.revokeObjectURL(a.href)
 }
 
-function logFlushFinal() { saveLog(); saveDetLog() }
+function logFlushFinal() { saveLog(); saveDetLog(); saveTrackerLog() }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
