@@ -31,14 +31,13 @@ const HTML_FILES = [
 
 const OBFUSCATOR_OPTIONS = {
     compact: true,
-    controlFlowFlattening: false,   // keep off — avoids slowdown in tight rAF loops
+    controlFlowFlattening: false,
     deadCodeInjection: false,
-    stringArray: true,
-    stringArrayEncoding: ['base64'],
-    stringArrayThreshold: 0.75,
+    stringArray: false,             // keep off — string array lookups add function-call overhead
+                                    // that breaks JIT optimisation in tight NCC loops
     identifierNamesGenerator: 'hexadecimal',
     renameGlobals: false,           // keep off — globals like W, H, ZOOM are shared across files
-    selfDefending: false,           // keep off — causes issues with DevTools pausing
+    selfDefending: false,
 };
 
 function ensureDir(dir) {
