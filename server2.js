@@ -36,8 +36,9 @@ function handle(req, res) {
     }
 
     const distDir  = path.join(__dirname, 'dist');
-    const baseDir  = fs.existsSync(distDir) ? distDir : __dirname;
-    let filePath = path.join(baseDir, req.url === "/" ? "/cam2.html" : req.url);
+    const baseDir  = fs.existsSync(path.join(distDir, 'cam2.html')) ? distDir : __dirname;
+    const pathname = req.url.split('?')[0];
+    let filePath = path.join(baseDir, pathname === "/" ? "/cam2.html" : pathname);
     const ext = path.extname(filePath);
     fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end("Not found"); return; }
