@@ -20,9 +20,6 @@ const showPoints = document.getElementById("showPoints")
 
 const memorySlider = document.getElementById("memoryRadius")
 const trailSlider = document.getElementById("trailDuration")
-const maxPointGapSlider = document.getElementById("maxPointGap")
-const maxPointGapBeforeSlider = document.getElementById("maxPointGapBefore")
-const maxCurveAngleSlider = document.getElementById("maxCurveAngle")
 
 const width = 360
 const height = 640
@@ -30,10 +27,27 @@ const height = 640
 canvas.width = width
 canvas.height = height
 
-let prevFrame = null
+// Draw video frame onto canvas.
+// If the camera gives a landscape frame (e.g. 1920×1080), take the center
+// 9:16 portrait crop — matching what the phone camera app shows in video mode.
+function drawVideoFrame() {
+    const vw = video.videoWidth, vh = video.videoHeight
+    if (!vw || !vh) { ctx.drawImage(video, 0, 0, width, height); return }
+    if (vw > vh) {
+        // Landscape frame: crop center portrait slice
+        const srcW = vh * (width / height)
+        const srcX = (vw - srcW) / 2
+        ctx.drawImage(video, srcX, 0, srcW, vh, 0, 0, width, height)
+    } else {
+        ctx.drawImage(video, 0, 0, vw, vh, 0, 0, width, height)
+    }
+}
+
+const prevFrame = new Uint8ClampedArray(width * height * 4)
+let prevFrameReady = false
 let frameCount = 0
 
-const WARMUP_SECONDS = 0.7
+const WARMUP_SECONDS = 0.1
 
 let streamPoints = []
 let tracker = null
@@ -44,6 +58,132 @@ const BIN_WIDTH_RATIO = 0.5     // max fraction of wide bins allowed (was 0.4)
 let rafId = null
 let lastVideoTime = -1    // tracks last unique video frame we processed
 let mainLineCache = []    // persists EMA-smoothed line between frames
+let anchorState = { exit: null, entrance: null }  // smoothed X for anchor dots
+
+// ── Bowl Tracker (NCC patch tracking) ──────────────────────────────────────
+const BOWL_PATCH_HALF = 18   // 40×40 px reference patch centered on endEllipse
+const BOWL_NCC_MIN   = 0.30  // quality gate — below this, hold last known position
+const _candidateBuf  = new Float32Array((BOWL_PATCH_HALF*2) * (BOWL_PATCH_HALF*2))
+let bowlTracker    = null    // {normRef, x, y, quality} or null
+let bowlCalibStart = null    // Date.now() when countdown started, null = off
+
+function _grayAt(d, x, y) {
+    const i = (y * width + x) * 4
+    return 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]
+}
+
+function startBowlCalibCountdown() {
+    bowlTracker    = null
+    bowlCalibStart = Date.now()
+}
+
+function initBowlTracker(data) {
+    const ph = BOWL_PATCH_HALF, n = (ph*2)*(ph*2)
+    const cx = Math.round(endEllipse.x), cy = Math.round(endEllipse.y- 35)
+    const raw = new Float32Array(n)
+    let sum = 0
+    for (let dy = -ph; dy < ph; dy++) {
+        for (let dx = -ph; dx < ph; dx++) {
+            const g = _grayAt(data,
+                Math.max(0, Math.min(width-1,  cx+dx)),
+                Math.max(0, Math.min(height-1, cy+dy)))
+            raw[(dy+ph)*(ph*2)+(dx+ph)] = g; sum += g
+        }
+    }
+    const mean = sum / n
+    let v = 0
+    for (let i = 0; i < n; i++) { raw[i] -= mean; v += raw[i]*raw[i] }
+    const std = Math.sqrt(v / n)
+    if (std < 1e-6) return   // flat/textureless patch — cannot track reliably
+    const normRef = new Float32Array(n)
+    for (let i = 0; i < n; i++) normRef[i] = raw[i] / std
+    bowlTracker = { normRef, x: cx, y: cy, quality: 1.0 }
+}
+
+// Normalized Cross-Correlation at candidate position (cx,cy).
+// Returns value in [-1,1]; 1 = perfect match.
+// Reuses _candidateBuf to avoid per-call allocation.
+function _nccAt(normRef, data, cx, cy) {
+    const ph = BOWL_PATCH_HALF, n = (ph*2)*(ph*2)
+    let sum = 0
+    for (let dy = -ph; dy < ph; dy++) {
+        for (let dx = -ph; dx < ph; dx++) {
+            const g = _grayAt(data,
+                Math.max(0, Math.min(width-1,  cx+dx)),
+                Math.max(0, Math.min(height-1, cy+dy)))
+            _candidateBuf[(dy+ph)*(ph*2)+(dx+ph)] = g; sum += g
+        }
+    }
+    const mean = sum / n
+    let v = 0, dot = 0
+    for (let i = 0; i < n; i++) {
+        const c = _candidateBuf[i] - mean
+        v += c*c; dot += normRef[i] * c
+    }
+    const std = Math.sqrt(v / n)
+    return std < 1e-6 ? 0 : dot / (n * std)
+}
+
+function _bowlSearch(normRef, data, lx, ly, radius, step) {
+    const ph = BOWL_PATCH_HALF
+    let bx = lx, by = ly, best = -2
+    for (let dy = -radius; dy <= radius; dy += step) {
+        for (let dx = -radius; dx <= radius; dx += step) {
+            const cx = Math.round(lx+dx), cy = Math.round(ly+dy)
+            if (cx-ph < 0 || cx+ph >= width || cy-ph < 0 || cy+ph >= height) continue
+            const ncc = _nccAt(normRef, data, cx, cy)
+            if (ncc > best) { best = ncc; bx = cx; by = cy }
+        }
+    }
+    return { x: bx, y: by, ncc: best }
+}
+
+function updateBowlTracker(data) {
+    if (!bowlTracker) return
+    const { normRef, x: lx, y: ly } = bowlTracker
+    // Adaptive search: start small, expand only if quality is poor
+    let res = _bowlSearch(normRef, data, lx, ly, 30, 2)
+    if (res.ncc < 0.6) {
+        const r2 = _bowlSearch(normRef, data, lx, ly, 70, 3)
+        if (r2.ncc > res.ncc) res = r2
+    }
+    if (res.ncc < 0.4) {
+        const r3 = _bowlSearch(normRef, data, lx, ly, 120, 4)
+        if (r3.ncc > res.ncc) res = r3
+    }
+    // Quality gate: only move the dot if match is confident enough
+    if (res.ncc >= BOWL_NCC_MIN) { bowlTracker.x = res.x; bowlTracker.y = res.y }
+    bowlTracker.quality = res.ncc
+}
+
+function drawBowlCalibCountdown() {
+    if (bowlCalibStart === null || bowlTracker) return
+    const remaining = Math.max(1, Math.ceil(5 - (Date.now() - bowlCalibStart) / 1000))
+    ctx.font = 'bold 110px Arial'
+    ctx.textAlign = 'center'
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 16
+    ctx.fillStyle = 'rgba(0,220,255,0.9)'
+    ctx.fillText(remaining, width/2, height/2 + 36)
+    ctx.shadowBlur = 0
+}
+
+function drawBowlDot() {
+    if (!bowlTracker) return
+    const q = bowlTracker.quality
+    // cyan = good lock, orange = marginal, red = holding (below quality gate)
+    const color = q >= 0.6 ? '#00ffff' : q >= BOWL_NCC_MIN ? '#ffaa00' : '#ff4444'
+    ctx.beginPath()
+    ctx.arc(bowlTracker.x, bowlTracker.y, 9, 0, Math.PI*2)
+    ctx.fillStyle = color; ctx.globalAlpha = 0.85; ctx.fill()
+    ctx.globalAlpha = 1; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = '#fff'; ctx.font = '10px Arial'; ctx.textAlign = 'center'
+    ctx.fillText((q*100).toFixed(0)+'%', bowlTracker.x, bowlTracker.y - 14)
+}
+
+// ── Game state ─────────────────────────────────────────────────────────────
+let totalHitMs = 0
+let hitStartTime = null
+const TARGET_RADIUS = 20
 
 // ── Debug logging ──────────────────────────────────────────────
 let runCount = 0
@@ -99,6 +239,26 @@ endEllipse.y=y
 })
 
 canvas.addEventListener("mouseup",()=>dragging=null)
+canvas.addEventListener("mouseleave",()=>dragging=null)
+
+canvas.addEventListener("touchstart",e=>{
+    e.preventDefault()
+    const t=e.touches[0],r=canvas.getBoundingClientRect()
+    const x=t.clientX-r.left,y=t.clientY-r.top
+    if(pointInEllipse(x,y,startEllipse)) dragging="start"
+    else if(pointInEllipse(x,y,endEllipse)) dragging="end"
+},{passive:false})
+
+canvas.addEventListener("touchmove",e=>{
+    e.preventDefault()
+    if(!dragging) return
+    const t=e.touches[0],r=canvas.getBoundingClientRect()
+    const x=t.clientX-r.left,y=t.clientY-r.top
+    if(dragging==="start"){startEllipse.x=x;startEllipse.y=y}
+    if(dragging==="end"){endEllipse.x=x;endEllipse.y=y}
+},{passive:false})
+
+canvas.addEventListener("touchend",()=>dragging=null)
 
 function pointInEllipse(x,y,e)
 {
@@ -159,7 +319,9 @@ function inFunnel(x,y)
 {
 if (y > startEllipse.y || y < endEllipse.y - 40) return false;
 
-let t = (startEllipse.y - y) / (startEllipse.y - endEllipse.y);
+const denom = startEllipse.y - endEllipse.y;
+if (Math.abs(denom) < 1) return false;
+let t = (startEllipse.y - y) / denom;
 let center = startEllipse.x + (endEllipse.x - startEllipse.x) * t;
 
 let startW = startEllipse.rx * 2;
@@ -207,14 +369,22 @@ function processFrame() {
     if (video.currentTime === lastVideoTime) return;
     lastVideoTime = video.currentTime;
 
-    ctx.drawImage(video, 0, 0, width, height);
+    drawVideoFrame();
     let img = ctx.getImageData(0, 0, width, height);
     let frame = img.data;
 
-    if (!prevFrame || video.currentTime < WARMUP_SECONDS) {
+    // Bowl tracker runs every frame independently of motion detection
+    if (bowlCalibStart !== null && !bowlTracker && Date.now() - bowlCalibStart >= 5000) {
+        initBowlTracker(frame)
+        bowlCalibStart = null
+    }
+    if (bowlTracker) updateBowlTracker(frame)
+
+    if (!prevFrameReady || video.currentTime < WARMUP_SECONDS) {
         // Warm-up: skip until video is at WARMUP_SECONDS so every run starts
         // detection at the same video timestamp regardless of rAF/seek timing
-        prevFrame = new Uint8ClampedArray(frame);
+        prevFrame.set(frame);
+        prevFrameReady = true;
         return;
     }
 
@@ -232,6 +402,12 @@ function processFrame() {
                 motionPoints.push({x, y});
             }
         }
+    }
+
+    // Splash corridor filter: when stream is locked, discard bowl-region motion
+    // that falls outside the parabola corridor (splash, not stream).
+    if (tracker && document.getElementById("useSplashFilter").checked) {
+        motionPoints = applyBowlSplashFilter(motionPoints);
     }
 
     let ridge = [];
@@ -310,7 +486,8 @@ function processFrame() {
         }
         if (logEntry) {
             logEntry.suppressed = (ridge.length === 0);
-            currentRun.frames.push(logEntry);
+            if (currentRun.frames.length < 2000)
+                currentRun.frames.push(logEntry);
         }
     } else {
         ridge = getRidgePoints(motionPoints);
@@ -338,7 +515,7 @@ function processFrame() {
 
         if (accept) {
             for (let p of ridge) {
-                streamPoints.push(p);
+                streamPoints.push({ x: p.x, y: p.y, t: p.t ?? Date.now() });
             }
 
             if (!tracker) {
@@ -356,7 +533,7 @@ function processFrame() {
         }
     }
 
-    prevFrame = new Uint8ClampedArray(frame);
+    prevFrame.set(frame);
 
     if (showMotion.checked) drawMotion(motionPoints);
 }
@@ -434,6 +611,26 @@ function fitStreamParabola(pts) {
     return { a: coef[0], b: coef[1], c: coef[2] };
 }
 
+// Weighted variant: pts must carry a .w field (raw detection count).
+// Higher-count bins pull the fit toward themselves; sparse bins barely influence it.
+function fitStreamParabolaWeighted(pts) {
+    if (pts.length < 3) return null;
+    let sw=0, swy4=0, swy3=0, swy2=0, swy1=0;
+    let swxy2=0, swxy1=0, swxy0=0;
+    for (const p of pts) {
+        const w = p.w ?? 1, y = p.y, x = p.x;
+        sw    += w;
+        swy4  += w*y*y*y*y; swy3 += w*y*y*y; swy2 += w*y*y; swy1 += w*y;
+        swxy2 += w*x*y*y;   swxy1 += w*x*y;  swxy0 += w*x;
+    }
+    const coef = solveLinear3(
+        [[swy4, swy3, swy2], [swy3, swy2, swy1], [swy2, swy1, sw]],
+        [swxy2, swxy1, swxy0]
+    );
+    if (!coef) return null;
+    return { a: coef[0], b: coef[1], c: coef[2] };
+}
+
 // ── Main stream line ─────────────────────────────────────────────────────────
 // Physics constraints:
 //   1. EMA temporal smoothing — X positions glide rather than snap between frames
@@ -441,6 +638,48 @@ function fitStreamParabola(pts) {
 //      angle steeper than maxCurveAngle (from vertical), stop the line at that point
 //   3. Prediction mode — fits a parabola to the clean stream body and extrapolates
 //      through the noisy bowl region instead of trusting splashing detections
+// Walk fitted parabola from startY toward endY (1px steps); return first {x,y}
+// where predicate(x,y) is true, or null if never satisfied.
+function parabolaIntersect(fit, startY, endY, predicate) {
+    const step = endY < startY ? -1 : 1;
+    for (let y = startY; step < 0 ? y >= endY : y <= endY; y += step) {
+        const x = fit.a*y*y + fit.b*y + fit.c;
+        if (predicate(x, y)) return { x, y };
+    }
+    return null;
+}
+
+// Where the parabola first enters the end ellipse coming from the body (high Y → low Y).
+function getEntryPt(fit) {
+    const pt = parabolaIntersect(
+        fit,
+        endEllipse.y + endEllipse.ry,    // start: bottom (body-facing) edge
+        endEllipse.y - endEllipse.ry,    // end:   top edge
+        (x, y) => pointInEllipse(x, y, endEllipse)
+    );
+    if (pt) return pt;
+    // Fallback: evaluate parabola at extreme Y
+    const y = endEllipse.y + endEllipse.ry;
+    return { x: fit.a*y*y + fit.b*y + fit.c, y };
+}
+
+// Where the parabola exits the start ellipse heading toward the bowl.
+function getExitPt(fit) {
+    const pt = parabolaIntersect(
+        fit,
+        startEllipse.y,                      // start: centre of start ellipse
+        startEllipse.y - startEllipse.ry,    // end:   top (bowl-facing) edge
+        (x, y) => !pointInEllipse(x, y, startEllipse)
+    );
+    if (pt) {
+        // Step back one pixel — last point still inside/on the boundary
+        const y = pt.y + 1;
+        return { x: fit.a*y*y + fit.b*y + fit.c, y };
+    }
+    const y = startEllipse.y - startEllipse.ry;
+    return { x: fit.a*y*y + fit.b*y + fit.c, y };
+}
+
 function drawMainStreamLine() {
     if (streamPoints.length < 6) return;
 
@@ -474,150 +713,72 @@ function drawMainStreamLine() {
     mainLineCache = newCache;
     if (mainLineCache.length < 2) return;
 
-    const maxGapBefore = parseInt(maxPointGapBeforeSlider.value);
-    const maxGapAfter  = parseInt(maxPointGapSlider.value);
-    const usePrediction = document.getElementById("showPrediction").checked;
-
-    // Y where the stream enters the orange ellipse from below (high-Y side)
+    // ── Fit parabola to clean body ────────────────────────────────────────────
     const ellipseEntryY = endEllipse.y + endEllipse.ry;
+    const exitY         = startEllipse.y - startEllipse.ry;
+    const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY && p.y <= exitY + BIN_H);
+    const fit = cleanPts.length >= 4 ? fitStreamParabola(cleanPts) : null;
 
-    let drawPts;   // final [{x,y}] sorted ascending Y (top→bottom)
+    // ── Compute exact ellipse-boundary intersection points ────────────────────
+    let exitPt, entryPt;
 
-    if (usePrediction) {
-        // ── Prediction mode ──────────────────────────────────────────────────
-        // Use only the clean stream body (above the ellipse entry) for fitting
-        const cleanCache = mainLineCache.filter(p => p.y > ellipseEntryY);
-
-        // Gap-filter the clean body (descend from body toward ellipse entry)
-        const descClean = cleanCache.slice().sort((a, b) => b.y - a.y);
-        const cleanFiltered = [];
-        for (const cur of descClean) {
-            if (cleanFiltered.length > 0) {
-                const prev = cleanFiltered[cleanFiltered.length - 1];
-                if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > maxGapBefore) continue;
-            }
-            cleanFiltered.push({ x: cur.x, y: cur.y });
-        }
-
-        // Fit parabola x = a·y² + b·y + c to the clean body
-        const fit = fitStreamParabola(cleanFiltered);
-
-        if (fit && cleanFiltered.length >= 4) {
-            // Generate predicted points from ellipse entry down to ellipse far edge
-            const minY = endEllipse.y - endEllipse.ry;
-            const predPts = [];
-            for (let y = ellipseEntryY; y >= minY; y -= BIN_H) {
-                const predX = fit.a * y * y + fit.b * y + fit.c;
-                if (predX >= 0 && predX <= width)
-                    predPts.push({ x: predX, y: y + BIN_H / 2, predicted: true });
-            }
-            // Combine: predicted bowl (low Y) + clean detected body (high Y)
-            cleanFiltered.sort((a, b) => a.y - b.y);
-            drawPts = [...predPts.sort((a, b) => a.y - b.y), ...cleanFiltered];
-            drawPts.sort((a, b) => a.y - b.y);
-        } else {
-            // Not enough data for fit yet — fall back to detected points only
-            cleanFiltered.sort((a, b) => a.y - b.y);
-            drawPts = cleanFiltered;
-        }
-
+    if (fit) {
+        exitPt  = getExitPt(fit);
+        entryPt = getEntryPt(fit);
     } else {
-        // ── Normal mode: gap-filter detected points ──────────────────────────
-        const descending = mainLineCache.slice().sort((a, b) => b.y - a.y);
-        const filtered = [];
-        let crossedEllipse = false;
-        for (const cur of descending) {
-            if (!crossedEllipse && cur.y <= endEllipse.y) crossedEllipse = true;
-            if (filtered.length > 0) {
-                const prev = filtered[filtered.length - 1];
-                const limit = crossedEllipse ? maxGapAfter : maxGapBefore;
-                if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > limit) continue;
-            }
-            filtered.push({ x: cur.x, y: cur.y });
-        }
-        filtered.sort((a, b) => a.y - b.y);
-        drawPts = filtered;
+        // Fallback: use smoothed anchor X from previous frame at fixed extreme Y
+        const eX = anchorState.exit;
+        const nX = anchorState.entrance;
+        if (eX === null || nX === null) return;
+        exitPt  = { x: eX, y: exitY };
+        entryPt = { x: nX, y: ellipseEntryY };
     }
 
-    if (!drawPts || drawPts.length < 2) return;
+    // ── Sample parabola from exitPt → entryPt ────────────────────────────────
+    const STEP = 8;
+    let linePts;
 
-    // Ellipse entry angle cutoff:
-    // drawPts is sorted ascending Y → low-Y (bowl side) at start, high-Y (body) at end.
-    // bodyStart = first index where y > ellipseEntryY  (first body-side point).
-    // The crossing segment goes from bodyStart (body) → bodyStart-1 (bowl).
-    // If that segment's angle from vertical exceeds maxCurveAngle, drop all bowl-side
-    // points — the line stops at the ellipse boundary.
-    const maxAngle = parseInt(maxCurveAngleSlider.value);
-    const bodyStart = drawPts.findIndex(p => p.y > ellipseEntryY);
-    if (bodyStart > 0) {
-        const bowlPt = drawPts[bodyStart - 1];
-        const bodyPt = drawPts[bodyStart];
-        const dx = bowlPt.x - bodyPt.x;
-        const dy = bowlPt.y - bodyPt.y;   // negative: bowl is lower Y
-        const entryAngle = Math.atan2(Math.abs(dx), Math.abs(dy)) * 180 / Math.PI;
-        if (entryAngle > maxAngle) {
-            drawPts = drawPts.slice(bodyStart);   // stop at the ellipse boundary
-        }
+    if (fit) {
+        linePts = [];
+        for (let y = exitPt.y; y >= entryPt.y; y -= STEP)
+            linePts.push({ x: fit.a*y*y + fit.b*y + fit.c, y });
+        // Guarantee the entry endpoint is always included
+        if (!linePts.length || linePts[linePts.length-1].y > entryPt.y)
+            linePts.push({ x: fit.a*entryPt.y*entryPt.y + fit.b*entryPt.y + fit.c, y: entryPt.y });
+        // Pin exact intersection points at both ends
+        linePts[0]                  = exitPt;
+        linePts[linePts.length - 1] = entryPt;
+    } else {
+        linePts = [exitPt, entryPt];
     }
 
-    if (drawPts.length < 2) return;
-    const pts = drawPts;
+    if (linePts.length < 2) return;
 
-    // Draw: solid purple for detected, dashed for predicted extension
-    // Split into detected and predicted segments
-    let i = 0;
-    while (i < pts.length) {
-        // Find start of next run of same type
-        const isPred = !!pts[i].predicted;
-        let j = i + 1;
-        while (j < pts.length && !!pts[j].predicted === isPred) j++;
-        const seg = pts.slice(i, j);
+    // ── Draw single smooth stroke ─────────────────────────────────────────────
+    ctx.beginPath();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(180, 0, 255, 0.85)";
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.lineCap  = "round";
 
-        ctx.beginPath();
-        if (isPred) {
-            ctx.setLineDash([6, 4]);
-            ctx.strokeStyle = "rgba(180, 0, 255, 0.6)";
-        } else {
-            ctx.setLineDash([]);
-            ctx.strokeStyle = "rgba(180, 0, 255, 0.85)";
-        }
-        ctx.lineWidth = 3;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-
-        ctx.moveTo(seg[0].x, seg[0].y);
-        for (let k = 1; k < seg.length - 1; k++) {
-            const mx = (seg[k].x + seg[k + 1].x) / 2;
-            const my = (seg[k].y + seg[k + 1].y) / 2;
-            ctx.quadraticCurveTo(seg[k].x, seg[k].y, mx, my);
-        }
-        ctx.lineTo(seg[seg.length - 1].x, seg[seg.length - 1].y);
-        ctx.stroke();
-
-        i = j;
+    ctx.moveTo(linePts[0].x, linePts[0].y);
+    for (let k = 1; k < linePts.length - 1; k++) {
+        const mx = (linePts[k].x + linePts[k+1].x) / 2;
+        const my = (linePts[k].y + linePts[k+1].y) / 2;
+        ctx.quadraticCurveTo(linePts[k].x, linePts[k].y, mx, my);
     }
-    ctx.setLineDash([]);   // reset dash for other drawing operations
+    ctx.lineTo(linePts[linePts.length-1].x, linePts[linePts.length-1].y);
+    ctx.stroke();
 }
 
 // ── Endpoint estimator helpers ───────────────────────────────────────────────
 
-// Linear regression x = m·y + b (y as independent variable). Returns {m,b} or null.
-function linearRegression(pts) {
-    const n = pts.length;
-    if (n < 2) return null;
-    let sy = 0, sx = 0, sy2 = 0, sxy = 0;
-    for (const p of pts) { sy += p.y; sx += p.x; sy2 += p.y * p.y; sxy += p.x * p.y; }
-    const denom = n * sy2 - sy * sy;
-    if (Math.abs(denom) < 1e-10) return null;
-    const m = (n * sxy - sy * sx) / denom;
-    const b = (sx - m * sy) / n;
-    return { m, b };
-}
 function drawEstimatorCircle(x, y, color, label) {
     ctx.beginPath();
-    ctx.arc(x, y, 18, 0, Math.PI * 2);
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 2;
     ctx.stroke();
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.3;
@@ -629,58 +790,208 @@ function drawEstimatorCircle(x, y, color, label) {
     ctx.fillText(label, x, y + 32);
 }
 
-// Algo 1 — Frontier Centroid (cyan)
-// Takes the lowest-Y 25% of streamPoints (closest to bowl) and shows their median.
-function drawEstimator1() {
-    if (!tracker || streamPoints.length < 4) return;
-    const sorted = streamPoints.slice().sort((a, b) => a.y - b.y);
-    const top = sorted.slice(0, Math.max(1, Math.ceil(sorted.length * 0.25)));
-    const xs = top.map(p => p.x).sort((a, b) => a - b);
-    const ys = top.map(p => p.y).sort((a, b) => a - b);
-    const medX = xs[Math.floor(xs.length / 2)];
-    const medY = ys[Math.floor(ys.length / 2)];
-    drawEstimatorCircle(medX, medY, "cyan", "E1");
+
+// Algo 2 — Parabola Impact (yellow)
+// Fits the count-weighted parabola to the stream body and evaluates it at the
+// bowl centre Y — predicts the X where the stream arc meets the water surface.
+function getE2Point() {
+    if (!tracker || mainLineCache.length < 4) return null;
+    const ellipseEntryY = endEllipse.y + endEllipse.ry;
+    const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY);
+    if (cleanPts.length < 4) return null;
+    const fit = fitStreamParabolaWeighted(cleanPts);
+    if (!fit) return null;
+    const predX = fit.a * endEllipse.y * endEllipse.y + fit.b * endEllipse.y + fit.c;
+    if (predX < 0 || predX > width) return null;
+    return { x: predX, y: endEllipse.y };
+}
+function drawEstimator2() {
+    const pt = getE2Point();
+    if (!pt) return;
+    drawEstimatorCircle(pt.x, pt.y, "yellow", "E2");
 }
 
-// Algo 2 — Parabola Endpoint (yellow)
-// Fits x = a·y² + b·y + c to the clean stream body (above ellipse entry)
-// and evaluates it at the bowl centre Y.
-function drawEstimator2() {
-    if (!tracker || mainLineCache.length < 4) return;
+// Algo 3 — Bowl Impact Centroid (magenta)
+// Looks at stream points actually detected INSIDE the end ellipse (direct hit evidence).
+// Falls back to parabola extrapolation if no in-bowl detections are available.
+function drawEstimator3() {
+    if (!tracker || streamPoints.length < 4) return;
+    const now = Date.now();
+    const recent = streamPoints.filter(p => now - (p.t ?? now) < 500);
+    const inBowl = recent.filter(p => pointInEllipse(p.x, p.y, endEllipse));
+    if (inBowl.length >= 3) {
+        inBowl.sort((a, b) => a.x - b.x);
+        const med = inBowl[Math.floor(inBowl.length / 2)];
+        drawEstimatorCircle(med.x, med.y, "magenta", "E3");
+        return;
+    }
+    // Fallback: parabola body extrapolated to bowl centre
     const ellipseEntryY = endEllipse.y + endEllipse.ry;
     const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY);
     if (cleanPts.length < 4) return;
-    const fit = fitStreamParabola(cleanPts);
+    const fit = fitStreamParabolaWeighted(cleanPts);
     if (!fit) return;
     const predX = fit.a * endEllipse.y * endEllipse.y + fit.b * endEllipse.y + fit.c;
     if (predX < 0 || predX > width) return;
-    drawEstimatorCircle(predX, endEllipse.y, "yellow", "E2");
+    drawEstimatorCircle(predX, endEllipse.y, "magenta", "E3");
 }
 
-// Algo 3 — Direction Projection (red)
-// Takes the bowl-nearest 30% of mainLineCache bands, fits a line x = m·y + b,
-// then walks along it from the last known point toward decreasing Y until the
-// point enters the endEllipse.
-function drawEstimator3() {
-    if (!tracker || mainLineCache.length < 3) return;
-    const sorted = mainLineCache.slice().sort((a, b) => a.y - b.y);  // ascending Y
-    const nearBowl = sorted.slice(0, Math.max(2, Math.ceil(sorted.length * 0.3)));
-    const reg = linearRegression(nearBowl);
-    if (!reg) return;
+// ── Smart Splash Corridor Filter ─────────────────────────────────────────────
+// When the stream body (above the end ellipse bottom) has been detected and a
+// parabola x = a·y² + b·y + c is fitted to it, restrict bowl-region motion
+// points to a ±corridorW-pixel band around the predicted X.  Splash scatters
+// widely; the real stream impact stays in a narrow column.
+function applyBowlSplashFilter(motionPoints) {
+    const ellipseEntryY = endEllipse.y + endEllipse.ry;   // bottom of end ellipse
+    const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY);
+    if (cleanPts.length < 4) return motionPoints;          // not enough body data yet
 
-    // Walk from the leading point toward decreasing Y (into the bowl)
-    const startY = nearBowl[0].y;
-    for (let y = startY; y >= endEllipse.y - endEllipse.ry; y--) {
-        const x = reg.m * y + reg.b;
-        if (pointInEllipse(x, y, endEllipse)) {
-            drawEstimatorCircle(x, y, "red", "E3");
-            return;
+    const fit = fitStreamParabola(cleanPts);
+    if (!fit) return motionPoints;
+
+    const corridorEl = document.getElementById("splashCorridor");
+    const CORRIDOR_W = corridorEl ? parseInt(corridorEl.value) : 30;
+
+    return motionPoints.filter(p => {
+        if (p.y >= ellipseEntryY) return true;             // stream body: keep as-is
+        // Bowl / impact region: keep only within corridor of extrapolated trajectory
+        const predX = fit.a * p.y * p.y + fit.b * p.y + fit.c;
+        if (predX < 0 || predX > width) return false;
+        return Math.abs(p.x - predX) <= CORRIDOR_W;
+    });
+}
+
+// ── Anchor Points ─────────────────────────────────────────────────────────────
+// Start exit  — top edge of start ellipse (body side facing bowl), on the stream line
+// End entrance — bottom edge of end ellipse (body side), on the stream line
+// Both use the parabola fit from the clean stream body for X; fall back to
+// nearest cache point or ellipse-centre X if no fit is available.
+
+// Returns {x, count} where count = number of recent nearby raw detections that
+// produced the answer (high = direct evidence; 0 = extrapolated).
+function getAnchorX(targetY) {
+    const BIN_H           = 10;
+    const LOCAL_BAND      = 40;    // px either side of targetY for direct median
+    const MIN_DIRECT      = 10;    // min recent points to fire Stage 1 (raised from 5)
+    const ANCHOR_WINDOW_MS = 300;  // only use the last 300 ms for Stage 1
+    const MIN_COUNT_RATIO  = 0.15; // discard bins with < 15% of peak detection count
+
+    const ellipseEntryY = endEllipse.y + endEllipse.ry;
+    const now = Date.now();
+
+    // ── Stage 1: direct median of RECENT raw streamPoints near targetY ───────
+    // Short time window (300ms) makes the anchor responsive without reducing the
+    // global trail that the stream line and Stage 2 weighting depend on.
+    const nearby = streamPoints.filter(p =>
+        p.y > ellipseEntryY &&
+        Math.abs(p.y - targetY) <= LOCAL_BAND &&
+        (now - p.t) < ANCHOR_WINDOW_MS);
+    if (nearby.length >= MIN_DIRECT) {
+        const xs = nearby.map(p => p.x).sort((a, b) => a - b);
+        return { x: xs[Math.floor(xs.length / 2)], count: nearby.length };
+    }
+
+    // ── Stage 2: count-weighted parabola over body bins ─────────────────────
+    const map = {};
+    for (const p of streamPoints) {
+        if (p.y <= ellipseEntryY) continue;
+        const by = Math.floor(p.y / BIN_H) * BIN_H;
+        if (!map[by]) map[by] = [];
+        map[by].push(p.x);
+    }
+    let peakCount = 0;
+    const bins = [];
+    for (const by in map) {
+        const xs = map[by].slice().sort((a, b) => a - b);
+        const cnt = xs.length;
+        peakCount = Math.max(peakCount, cnt);
+        bins.push({ x: xs[Math.floor(xs.length / 2)], y: parseInt(by) + BIN_H / 2, w: cnt });
+    }
+    const filtered = bins.filter(b => b.w >= peakCount * MIN_COUNT_RATIO);
+    if (filtered.length >= 4) {
+        const fit = fitStreamParabolaWeighted(filtered);
+        if (fit) {
+            const x = fit.a * targetY * targetY + fit.b * targetY + fit.c;
+            if (x >= 0 && x <= width) return { x, count: 0 };
         }
     }
-    // Fallback: if the line never enters the ellipse, draw at ellipse centre Y
-    const fallbackX = reg.m * endEllipse.y + reg.b;
-    if (fallbackX >= 0 && fallbackX <= width)
-        drawEstimatorCircle(fallbackX, endEllipse.y, "red", "E3");
+
+    // ── Stage 3: nearest mainLineCache bin (last resort) ────────────────────
+    if (mainLineCache.length > 0) {
+        const closest = mainLineCache.reduce((best, p) =>
+            Math.abs(p.y - targetY) < Math.abs(best.y - targetY) ? p : best);
+        return { x: closest.x, count: 0 };
+    }
+    return null;
+}
+
+// Wraps getAnchorX with jump veto + EMA smoothing, persisted in anchorState[key].
+const JUMP_THRESHOLD = 20;    // px — jumps larger than this need high confidence
+const JUMP_MIN_COUNT = 15;    // recent raw points required to accept a large jump
+const EMA_ALPHA      = 0.25;  // output smoothing (≈4 frame lag at 30fps)
+
+function getSmoothedAnchorX(targetY, key) {
+    const result = getAnchorX(targetY);
+    if (!result) return anchorState[key];
+
+    const { x: rawX, count } = result;
+
+    if (anchorState[key] === null) {
+        anchorState[key] = rawX;   // first frame: accept any value
+        return rawX;
+    }
+
+    const jump = Math.abs(rawX - anchorState[key]);
+    if (jump > JUMP_THRESHOLD && count < JUMP_MIN_COUNT) {
+        return anchorState[key];   // reject — not enough nearby evidence for this jump
+    }
+
+    anchorState[key] = anchorState[key] * (1 - EMA_ALPHA) + rawX * EMA_ALPHA;
+    return anchorState[key];
+}
+
+function drawAnchorPoint(pt, color, label) {
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(label, pt.x, pt.y - 11);
+}
+
+function drawStartExitPoint() {
+    if (!tracker || mainLineCache.length < 2) return;
+    const ellipseEntryY = endEllipse.y + endEllipse.ry;
+    const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY);
+    const fit = cleanPts.length >= 4 ? fitStreamParabola(cleanPts) : null;
+    if (fit) {
+        drawAnchorPoint(getExitPt(fit), "#00ccff", "exit");
+    } else {
+        const y = startEllipse.y - startEllipse.ry;
+        const x = getSmoothedAnchorX(y, "exit") ?? startEllipse.x;
+        drawAnchorPoint({ x, y }, "#00ccff", "exit");
+    }
+}
+
+function drawEndEntrancePoint() {
+    if (!tracker || mainLineCache.length < 2) return;
+    const ellipseEntryY = endEllipse.y + endEllipse.ry;
+    const cleanPts = mainLineCache.filter(p => p.y > ellipseEntryY);
+    const fit = cleanPts.length >= 4 ? fitStreamParabola(cleanPts) : null;
+    if (fit) {
+        drawAnchorPoint(getEntryPt(fit), "#ff6600", "entry");
+    } else {
+        const y = ellipseEntryY;
+        const x = getSmoothedAnchorX(y, "entrance") ?? endEllipse.x;
+        drawAnchorPoint({ x, y }, "#ff6600", "entry");
+    }
 }
 
 // ── Overlay ──────────────────────────────────────────────────────────────────
@@ -694,15 +1005,57 @@ function drawOverlay() {
     if (document.getElementById("showStreamLine").checked)
         drawMainStreamLine()
 
-    if (document.getElementById("showEst1").checked) drawEstimator1()
+
     if (document.getElementById("showEst2").checked) drawEstimator2()
     if (document.getElementById("showEst3").checked) drawEstimator3()
+
+    if (document.getElementById("showStartExit").checked) drawStartExitPoint()
+    if (document.getElementById("showEndEntrance").checked) drawEndEntrancePoint()
 
     if (showFunnel.checked)
         drawFunnel()
 
     drawEllipse(startEllipse, "blue")
     drawEllipse(endEllipse, "orange")
+
+    // ── Target circle (left edge of end ellipse) ──────────────────────────
+    const targetX = endEllipse.x - endEllipse.rx + TARGET_RADIUS
+    const targetY = endEllipse.y
+    ctx.beginPath()
+    ctx.arc(targetX, targetY, TARGET_RADIUS, 0, Math.PI * 2)
+    ctx.strokeStyle = "white"
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.fillStyle = "rgba(255,255,255,0.15)"
+    ctx.fill()
+
+    // ── Hit detection for E2 (yellow) ─────────────────────────────────────
+    const e2pt = getE2Point()
+    const now = Date.now()
+    if (e2pt && Math.hypot(e2pt.x - targetX, e2pt.y - targetY) <= TARGET_RADIUS) {
+        if (hitStartTime === null) hitStartTime = now
+    } else {
+        if (hitStartTime !== null) {
+            totalHitMs += now - hitStartTime
+            hitStartTime = null
+        }
+    }
+
+    // ── HUD: total hit time ───────────────────────────────────────────────
+    const displayMs = totalHitMs + (hitStartTime !== null ? now - hitStartTime : 0)
+    ctx.fillStyle = "white"
+    ctx.font = "bold 18px Arial"
+    ctx.textAlign = "left"
+    ctx.fillText(`Hit: ${displayMs} ms`, 10, 25)
+
+    if (typeof chosenCamLabel === "string" && chosenCamLabel) {
+        ctx.font = "11px Arial"
+        ctx.fillStyle = "rgba(255,255,255,0.6)"
+        ctx.fillText(chosenCamLabel, 10, height - 8)
+    }
+
+    drawBowlCalibCountdown()
+    if (document.getElementById("showWaterBounds")?.checked) drawBowlDot()
 }
 
 function loop()
@@ -713,7 +1066,7 @@ rafId = null
 return
 }
 
-ctx.drawImage(video,0,0,width,height)
+drawVideoFrame()
 
 frameCount++
 
@@ -730,11 +1083,13 @@ rafId = requestAnimationFrame(loop)
 video.addEventListener("play", () => {
     streamPoints = [];
     tracker = null;
-    prevFrame = null;
+    prevFrameReady = false;
     frameCount = 0;
     pendingLock = 0;
     lastVideoTime = -1;
     mainLineCache = [];
+    anchorState = { exit: null, entrance: null };
+    totalHitMs = 0; hitStartTime = null;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
 
     runCount++;
@@ -762,10 +1117,11 @@ video.addEventListener("pause", () => {
     // Clear everything when pausing so next Play is 100% clean
     streamPoints = [];
     tracker = null;
-    prevFrame = null;
+    prevFrameReady = false;
     pendingLock = 0;
     lastVideoTime = -1;
     mainLineCache = [];
+    anchorState = { exit: null, entrance: null };
 });
 
 restartBtn.onclick = () =>
@@ -774,11 +1130,14 @@ restartBtn.onclick = () =>
 
     streamPoints = [];
     tracker = null;
-    prevFrame = null;
+    prevFrameReady = false;
     frameCount = 0;
     pendingLock = 0;
     lastVideoTime = -1;
     mainLineCache = [];
+    anchorState = { exit: null, entrance: null };
+    totalHitMs = 0; hitStartTime = null;
+    bowlTracker = null; bowlCalibStart = null;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
 
     ctx.clearRect(0, 0, width, height);

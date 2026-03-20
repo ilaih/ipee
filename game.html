@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Stream Game</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; background: #000; }
+body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial; }
+#startBtn {
+    margin: 12px;
+    padding: 12px 32px;
+    font-size: 18px;
+    font-weight: bold;
+    background: #226;
+    color: white;
+    border: 2px solid #88f;
+    border-radius: 8px;
+}
+canvas {
+    display: block;
+    width: min(100vw, calc(100vh * (360 / 640)));
+    height: auto;
+}
+video { display: none; }
+.hidden { display: none !important; }
+
+/* Settings button */
+#settingsBtn {
+    display: none;
+    position: fixed;
+    top: 12px; right: 12px;
+    width: 42px; height: 42px;
+    background: rgba(0,0,0,0.55);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-radius: 50%;
+    font-size: 22px;
+    color: white;
+    cursor: pointer;
+    z-index: 100;
+    line-height: 38px;
+    text-align: center;
+}
+
+/* Settings modal */
+#settingsPanel {
+    display: none;
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(10,10,30,0.97);
+    border: 1px solid #88f;
+    border-radius: 14px;
+    padding: 20px 18px;
+    width: min(92vw, 340px);
+    max-height: 85vh;
+    overflow-y: auto;
+    z-index: 200;
+    color: #ddd;
+    font-size: 14px;
+}
+#settingsPanel h3 {
+    color: #aaf;
+    margin: 14px 0 6px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+#settingsPanel h3:first-child { margin-top: 0; }
+.s-row { display: flex; align-items: center; justify-content: space-between; margin: 7px 0; }
+.s-row label { flex: 1; }
+.s-row input[type=range] { width: 130px; accent-color: #88f; }
+.s-val { width: 34px; text-align: right; color: #aaf; font-weight: bold; }
+.s-row input[type=checkbox] { width: 20px; height: 20px; accent-color: #88f; }
+#settingsClose {
+    display: block; width: 100%; margin-top: 16px;
+    padding: 10px; background: #226; color: white;
+    border: 1px solid #88f; border-radius: 8px;
+    font-size: 15px; cursor: pointer;
+}
+</style>
+</head>
+<body>
+
+<button id="startBtn">Start Camera</button>
+<div id="camList" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#ccc;font-size:13px;padding:16px;max-width:90vw;text-align:left;background:rgba(0,0,0,0.85);border:1px solid #88f;border-radius:10px;z-index:999;line-height:1.8;"></div>
+<label id="fileLabel" style="display:none;margin:12px;padding:10px 20px;background:#226;color:white;border:2px solid #88f;border-radius:8px;font-size:16px;">
+    📁 Pick Video
+    <input type="file" id="videoUpload2" accept="video/*" style="display:none">
+</label>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<button id="settingsBtn">⚙️</button>
+
+<div id="settingsPanel">
+    <h3>Detection</h3>
+    <div class="s-row"><label>Motion Threshold</label><input type="range" id="s_motionThreshold" min="5" max="80" value="40" oninput="sync('motionThreshold',this)"><span class="s-val" id="v_motionThreshold">40</span></div>
+    <div class="s-row"><label>Trail Duration (ms)</label><input type="range" id="s_trailDuration" min="200" max="3000" value="1500" oninput="sync('trailDuration',this)"><span class="s-val" id="v_trailDuration">1500</span></div>
+    <div class="s-row"><label>Tracking Distance</label><input type="range" id="s_trackingDist" min="5" max="200" value="100" oninput="sync('trackingDist',this)"><span class="s-val" id="v_trackingDist">100</span></div>
+    <div class="s-row"><label>Frame Skip</label><input type="range" id="s_frameSkip" min="1" max="5" value="1" oninput="sync('frameSkip',this)"><span class="s-val" id="v_frameSkip">1</span></div>
+
+    <h3>Splash Filter</h3>
+    <div class="s-row"><label>Enable Splash Filter</label><input type="checkbox" id="s_useSplashFilter" checked onchange="syncCheck('useSplashFilter',this)"></div>
+    <div class="s-row"><label>Corridor Width (px)</label><input type="range" id="s_splashCorridor" min="5" max="80" value="30" oninput="sync('splashCorridor',this)"><span class="s-val" id="v_splashCorridor">30</span></div>
+
+    <h3>Bowl Tracker</h3>
+    <div class="s-row"><label>Show Tracked Dot</label><input type="checkbox" id="s_showWaterBounds" onchange="syncCheck('showWaterBounds',this)"></div>
+
+    <h3>Overlay</h3>
+    <div class="s-row"><label>Stream Line</label><input type="checkbox" id="s_showStreamLine" onchange="syncCheck('showStreamLine',this)"></div>
+    <div class="s-row"><label>Yellow Endpoint (E2)</label><input type="checkbox" id="s_showEst2" checked onchange="syncCheck('showEst2',this)"></div>
+    <div class="s-row"><label>Magenta Endpoint (E3)</label><input type="checkbox" id="s_showEst3" onchange="syncCheck('showEst3',this)"></div>
+    <div class="s-row"><label>Exit Point (cyan)</label><input type="checkbox" id="s_showStartExit" onchange="syncCheck('showStartExit',this)"></div>
+    <div class="s-row"><label>Entry Point (orange)</label><input type="checkbox" id="s_showEndEntrance" onchange="syncCheck('showEndEntrance',this)"></div>
+    <div class="s-row"><label>Funnel Lines</label><input type="checkbox" id="s_showFunnel" onchange="syncCheck('showFunnel',this)"></div>
+    <div class="s-row"><label>Stream Points</label><input type="checkbox" id="s_showPoints" onchange="syncCheck('showPoints',this)"></div>
+    <div class="s-row"><label>Motion Mask</label><input type="checkbox" id="s_showMotion" onchange="syncCheck('showMotion',this)"></div>
+
+    <button id="settingsClose">Close</button>
+</div>
+
+<!-- Required by app.js — all hidden -->
+<div class="hidden">
+<input type="file" id="videoUpload">
+<button id="play">Play</button>
+<button id="pause">Pause</button>
+<button id="restart">Restart</button>
+<button id="step">Step</button>
+<span id="runNum">0</span>
+<button id="saveLog">Save Log</button>
+
+<input type="range" id="motionThreshold" value="40">
+<input type="range" id="clusterSize"     value="8">
+<input type="range" id="trackingDist"    value="100">
+<input type="range" id="frameSkip"       value="1">
+<input type="range" id="memoryRadius"    value="70">
+<input type="range" id="trailDuration"   value="1500">
+<input type="range" id="splashCorridor"  value="30">
+
+<!-- Only E2 (yellow) and splash filter enabled; everything else off -->
+<input type="checkbox" id="showMotion">
+<input type="checkbox" id="showFunnel">
+<input type="checkbox" id="showPoints">
+<input type="checkbox" id="showStreamLine">
+<input type="checkbox" id="showStartExit">
+<input type="checkbox" id="showEndEntrance">
+<input type="checkbox" id="useSplashFilter" checked>
+<input type="checkbox" id="showEst2" checked>
+<input type="checkbox" id="showEst3">
+<input type="checkbox" id="showWaterBounds">
+</div>
+
+<script src="app.js"></script>
+
+<script>
+let currentStream = null;
+let chosenCamLabel = "";
+
+async function startCamera(deviceId) {
+    if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    const constraints = {
+        video: deviceId
+            ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+            : { facingMode: "environment" },
+        audio: false
+    };
+    currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = currentStream;
+    await video.play();
+}
+
+document.getElementById("startBtn").addEventListener("click", async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        document.getElementById("startBtn").style.display = "none";
+        document.getElementById("fileLabel").style.display = "inline-block";
+        return;
+    }
+    try {
+        document.getElementById("startBtn").style.display = "none";
+        // Open any camera first to unlock labels
+        await startCamera(null);
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const allCams = devices.filter(d => d.kind === "videoinput");
+
+        // Probe each camera: open it, read actual resolution, stop it
+        const camInfos = [];
+        for (const cam of allCams) {
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: { exact: cam.deviceId } }, audio: false
+                });
+                const settings = s.getVideoTracks()[0].getSettings();
+                s.getTracks().forEach(t => t.stop());
+                camInfos.push({ deviceId: cam.deviceId, label: cam.label || `Camera ${camInfos.length}`,
+                    w: settings.width, h: settings.height });
+            } catch (e) {
+                camInfos.push({ deviceId: cam.deviceId, label: cam.label || `Camera ${camInfos.length}`,
+                    w: "?", h: "?" });
+            }
+        }
+
+        // Show list
+        const listEl = document.getElementById("camList");
+        listEl.style.display = "block";
+        listEl.innerHTML = "<b style='color:#fff'>All cameras:</b><br>" +
+            camInfos.map(c => `• ${c.label} — ${c.w}×${c.h}`).join("<br>");
+
+        // Pick rear camera with lowest number in label (camera 0 = main 1x)
+        const rearCams = camInfos.filter(c => c.label.toLowerCase().includes("back"));
+        rearCams.sort((a, b) => {
+            const na = parseInt(a.label.match(/\d+/)?.[0] ?? "99");
+            const nb = parseInt(b.label.match(/\d+/)?.[0] ?? "99");
+            return na - nb;
+        });
+        const target = rearCams[0] || camInfos[0];
+        chosenCamLabel = target.label;
+        listEl.innerHTML += `<br><b style='color:#4f4'>→ Using: ${chosenCamLabel}</b>`;
+
+        await startCamera(target.deviceId);
+        // Hide list once video is running
+        setTimeout(() => { listEl.style.display = "none"; }, 4000);
+    } catch (e) {
+        document.getElementById("fileLabel").style.display = "inline-block";
+        alert("Camera error: " + e.message);
+    }
+});
+
+document.getElementById("videoUpload2").addEventListener("change", e => {
+    video.src = URL.createObjectURL(e.target.files[0]);
+    video.play();
+    document.getElementById("fileLabel").style.display = "none";
+});
+
+// Settings panel sync helpers
+function sync(id, slider) {
+    document.getElementById(id).value = slider.value;
+    document.getElementById("v_" + id).textContent = slider.value;
+}
+function syncCheck(id, cb) {
+    document.getElementById(id).checked = cb.checked;
+}
+
+// Show settings and auto-start bowl calibration when camera/video begins
+video.addEventListener("play", () => {
+    document.getElementById("settingsBtn").style.display = "block";
+    if (!bowlTracker) {
+        startBowlCalibCountdown();
+        document.getElementById("showWaterBounds").checked = true;
+        document.getElementById("s_showWaterBounds").checked = true;
+    }
+});
+
+document.getElementById("settingsBtn").addEventListener("click", () => {
+    document.getElementById("settingsPanel").style.display = "block";
+});
+document.getElementById("settingsClose").addEventListener("click", () => {
+    document.getElementById("settingsPanel").style.display = "none";
+});
+</script>
+
+</body>
+</html>

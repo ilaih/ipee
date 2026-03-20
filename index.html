@@ -34,8 +34,8 @@
 
 <div class="params">
 
-<label>Motion Threshold <span class="val" id="motionThresholdVal">10</span></label>
-<input type="range" id="motionThreshold" min="5" max="80" value="10" oninput="document.getElementById('motionThresholdVal').textContent=this.value">
+<label>Motion Threshold <span class="val" id="motionThresholdVal">46</span></label>
+<input type="range" id="motionThreshold" min="5" max="80" value="46" oninput="document.getElementById('motionThresholdVal').textContent=this.value">
 
 <label>Min Cluster Size <span class="val" id="clusterSizeVal">8</span></label>
 <input type="range" id="clusterSize" min="5" max="100" value="8" oninput="document.getElementById('clusterSizeVal').textContent=this.value">
@@ -54,31 +54,32 @@
 
 </div>
 
-<h3>Line Parameters</h3>
+<h3>Splash Filter</h3>
 
 <div class="params">
 
-<label>Max Gap Before Ellipse <span class="val" id="maxPointGapBeforeVal">120</span></label>
-<input type="range" id="maxPointGapBefore" min="10" max="300" value="120" oninput="document.getElementById('maxPointGapBeforeVal').textContent=this.value">
+<label><input type="checkbox" id="useSplashFilter" checked> enable bowl splash filter (parabola corridor)</label>
 
-<label>Max Gap After Ellipse <span class="val" id="maxPointGapVal">80</span></label>
-<input type="range" id="maxPointGap" min="10" max="300" value="80" oninput="document.getElementById('maxPointGapVal').textContent=this.value">
-
-<label>Max Curve Angle (°) <span class="val" id="maxCurveAngleVal">45</span></label>
-<input type="range" id="maxCurveAngle" min="5" max="85" value="45" oninput="document.getElementById('maxCurveAngleVal').textContent=this.value">
-
-<label><input type="checkbox" id="showPrediction" checked> with prediction</label>
+<label>Corridor Width <span class="val" id="splashCorridorVal">30</span> px</label>
+<input type="range" id="splashCorridor" min="5" max="80" value="30" oninput="document.getElementById('splashCorridorVal').textContent=this.value">
 
 </div>
+
 
 <h3>Endpoint Estimators</h3>
 
 <div class="debug">
 
-<label><input type="checkbox" id="showEst1" checked> frontier centroid (cyan)</label>
-<label><input type="checkbox" id="showEst2" checked> parabola endpoint (yellow)</label>
-<label><input type="checkbox" id="showEst3" checked> direction projection (red)</label>
 
+<label><input type="checkbox" id="showEst2" checked> parabola impact (yellow)</label>
+<label><input type="checkbox" id="showEst3" checked> bowl impact centroid (magenta)</label>
+
+</div>
+
+<h3>Bowl Tracker</h3>
+
+<div class="debug">
+<label><input type="checkbox" id="showWaterBounds" checked> show tracked dot</label>
 </div>
 
 <h3>Debug</h3>
@@ -89,11 +90,73 @@
 <label><input type="checkbox" id="showFunnel" checked> funnel</label>
 <label><input type="checkbox" id="showPoints" checked> stream points</label>
 <label><input type="checkbox" id="showStreamLine" checked> stream line</label>
+<label><input type="checkbox" id="showStartExit" checked> start exit point (cyan)</label>
+<label><input type="checkbox" id="showEndEntrance" checked> end entrance point (orange)</label>
 <button id="saveLog">Save Log</button>
 
 </div>
 
 <script src="app.js"></script>
+
+<script>
+// Auto-calibration: triggers once when video first plays.
+// Plays 0.2 s to get a real frame, pauses, counts down 5 s,
+// captures the reference patch, shows GO!, then resumes.
+let _calibLoopId = null;
+let _calibDone = false;
+
+video.addEventListener("play", () => {
+    if (_calibDone || bowlTracker) return;
+
+    // Defer so app.js play-handler runs first
+    setTimeout(async () => {
+        if (_calibDone || bowlTracker) return;
+
+        // 1. Let 0.2 s of real video play so the canvas has an actual frame
+        await new Promise(r => setTimeout(r, 200));
+        video.pause();
+
+        // 2. Start 5-second countdown
+        startBowlCalibCountdown();
+
+        // 3. rAF loop keeps canvas alive while video is paused
+        if (_calibLoopId) cancelAnimationFrame(_calibLoopId);
+
+        function countdownLoop() {
+            drawVideoFrame();   // redraws the paused frame
+            drawOverlay();      // shows countdown number + ellipses
+
+            // Manually trigger calibration when time is up
+            // (processFrame doesn't run while video is paused)
+            if (bowlCalibStart !== null && !bowlTracker &&
+                    Date.now() - bowlCalibStart >= 5000) {
+                const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                initBowlTracker(imgData.data);
+                bowlCalibStart = null;
+            }
+
+            if (bowlTracker) {
+                // Flash GO! then resume playback
+                drawVideoFrame();
+                drawOverlay();
+                ctx.font = 'bold 120px Arial';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#000'; ctx.shadowBlur = 18;
+                ctx.fillStyle = 'rgba(50,255,100,0.95)';
+                ctx.fillText('GO!', canvas.width / 2, canvas.height / 2 + 36);
+                ctx.shadowBlur = 0;
+                _calibLoopId = null;
+                _calibDone = true;
+                setTimeout(() => video.play(), 700);
+                return;
+            }
+
+            _calibLoopId = requestAnimationFrame(countdownLoop);
+        }
+        _calibLoopId = requestAnimationFrame(countdownLoop);
+    }, 0);
+});
+</script>
 
 </body>
 </html>

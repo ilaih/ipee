@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Stream Game</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+
+/* Canvas fills full viewport, centered, no top gap */
+#canvas {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(100vw, calc(100vh * (360 / 640)));
+    height: 100vh;
+    background: #000;
+}
+
+/* OK button — centered at bottom, floats over canvas */
+#okBtn {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 56px;
+    background: #cc2222;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 1px;
+    z-index: 100;
+}
+#okBtn:hover { background: #ee3333; }
+
+/* Settings gear — upper right, floats over canvas */
+#settingsBtn {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    width: 40px;
+    height: 40px;
+    background: rgba(0,0,0,0.5);
+    border: 1.5px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    color: white;
+    font-size: 20px;
+    line-height: 38px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 100;
+}
+#settingsBtn:hover { background: rgba(30,30,60,0.8); }
+
+#status {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #888;
+    font-size: 15px;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    pointer-events: none;
+    z-index: 50;
+}
+
+video { display: none; }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<button id="okBtn" onclick="onCalibOK()">OK</button>
+<button id="settingsBtn" onclick="openSettings()">⚙</button>
+<div id="status">Starting camera…</div>
+
+<video id="video" autoplay playsinline muted></video>
+
+<script src="tracker2.js"></script>
+<script src="stream2.js"></script>
+<script src="shared2.js"></script>
+<script src="water2.js"></script>
+<script>
+const video  = document.getElementById('video')
+const canvas = document.getElementById('canvas')
+const ctx    = canvas.getContext('2d')
+canvas.width  = W
+canvas.height = H
+
+initCalibDrag(canvas)
+
+const statusEl = document.getElementById('status')
+
+let rafId  = null
+let stream = null
+
+function camLoop() {
+    drawVideoFrame(video, ctx)
+    if (calibDone) {
+        const imgData = ctx.getImageData(0, 0, W, H)
+        updateTrackers(imgData.data)
+        updateBomb()
+        if (!isCountdownActive()) {
+            updateStream(imgData.data, Date.now())
+            updateHit()
+        }
+        drawTrackerDots(ctx)
+        drawWater(ctx)
+        drawBomb(ctx)
+        if (!isCountdownActive()) drawStreamOverlay(ctx)
+        drawGoFlash(ctx)
+    }
+    if (!calibDone) drawCalibOverlay(ctx)
+    rafId = requestAnimationFrame(camLoop)
+}
+
+function onCalibOK() {
+    calibDone = true
+    document.getElementById('okBtn').style.display = 'none'
+    // Redraw clean video frame (no overlay) before capturing NCC reference patches
+    drawVideoFrame(video, ctx)
+    const imgData = ctx.getImageData(0, 0, W, H)
+    initCandidateTrackers(imgData.data)
+    initWaterDetector(imgData.data)
+    initBomb()
+    // showGo() is called by tracker2.js after the 5s countdown + selection
+}
+
+video.addEventListener('play', () => {
+    statusEl.style.display = 'none'
+    if (rafId) cancelAnimationFrame(rafId)
+    rafId = requestAnimationFrame(camLoop)
+})
+
+// Pick the main rear camera (1× lens) — same logic as game.html.
+// Probes all devices, filters "back" cameras, sorts by label number,
+// picks the lowest (camera 0 = main 1× lens, not the ultrawide).
+async function startCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop())
+
+    // Open any camera first to unlock device labels
+    const init = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    init.getTracks().forEach(t => t.stop())
+
+    // Enumerate and probe
+    const devices  = await navigator.mediaDevices.enumerateDevices()
+    const allCams  = devices.filter(d => d.kind === 'videoinput')
+    const camInfos = []
+
+    for (const cam of allCams) {
+        try {
+            const s = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: cam.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            })
+            const st = s.getVideoTracks()[0].getSettings()
+            s.getTracks().forEach(t => t.stop())
+            camInfos.push({ deviceId: cam.deviceId, label: cam.label || `Camera ${camInfos.length}`, w: st.width, h: st.height })
+        } catch {
+            camInfos.push({ deviceId: cam.deviceId, label: cam.label || `Camera ${camInfos.length}`, w: 0, h: 0 })
+        }
+    }
+
+    // Rear camera 0 = main 1× lens
+    const rearCams = camInfos.filter(c => c.label.toLowerCase().includes('back'))
+    rearCams.sort((a, b) => {
+        const na = parseInt(a.label.match(/\d+/)?.[0] ?? '99')
+        const nb = parseInt(b.label.match(/\d+/)?.[0] ?? '99')
+        return na - nb
+    })
+    const target = rearCams[0] || camInfos[0]
+
+    stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: target.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+    })
+    video.srcObject = stream
+    await video.play()
+}
+
+startCamera().catch(err => {
+    statusEl.textContent = 'Camera error: ' + err.message
+    statusEl.style.display = 'block'
+})
+</script>
+
+</body>
+</html>

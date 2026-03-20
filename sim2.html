@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Stream Detector — Simulation</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; background: #000; font-family: Arial, sans-serif; overflow: hidden; }
+
+#controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #0d0d0d;
+    border-bottom: 1px solid #222;
+    height: 48px;
+    flex-shrink: 0;
+}
+#controls button, .file-btn {
+    padding: 6px 14px;
+    background: #1a1a3a;
+    color: #ccd;
+    border: 1px solid #446;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+#controls button:hover, .file-btn:hover { background: #252550; }
+
+#canvasWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: calc(100vh - 48px);
+    overflow: auto;
+    padding: 10px 0 8px;
+    background: #000;
+}
+canvas { display: block; width: 360px; height: 640px; background: #111; flex-shrink: 0; }
+
+#okBtn {
+    margin-top: 10px;
+    padding: 10px 48px;
+    background: #cc2222;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+}
+#okBtn:hover { background: #ee3333; }
+
+video  { display: none; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+    <label class="file-btn">Load Video<input type="file" id="upload" accept="video/*" style="display:none"></label>
+    <button id="playBtn">Play</button>
+    <button id="pauseBtn">Pause</button>
+    <button id="restartBtn">Restart</button>
+    <button onclick="openSettings()">Settings</button>
+</div>
+
+<div id="canvasWrap">
+    <canvas id="canvas"></canvas>
+    <button id="okBtn" onclick="onCalibOK()">OK</button>
+</div>
+
+<video id="video" playsinline></video>
+
+<script src="tracker2.js"></script>
+<script src="stream2.js"></script>
+<script src="shared2.js"></script>
+<script src="water2.js"></script>
+<script>
+const video  = document.getElementById('video')
+const canvas = document.getElementById('canvas')
+const ctx    = canvas.getContext('2d')
+canvas.width  = W
+canvas.height = H
+
+initCalibDrag(canvas)
+
+let rafId            = null
+let _waitingForCalib = false  // true while paused waiting for the user to press OK
+
+function simLoop() {
+    drawVideoFrame(video, ctx)
+    if (calibDone) {
+        const imgData = ctx.getImageData(0, 0, W, H)
+        updateTrackers(imgData.data)
+        updateBomb()
+        if (!isCountdownActive()) {
+            updateStream(imgData.data, video.currentTime * 1000)
+            updateHit()
+        }
+        drawTrackerDots(ctx)
+        drawWater(ctx)
+        drawBomb(ctx)
+        if (!isCountdownActive()) drawStreamOverlay(ctx)
+        drawGoFlash(ctx)
+    }
+    if (!calibDone) drawCalibOverlay(ctx)
+    rafId = requestAnimationFrame(simLoop)   // always keep running
+}
+
+function _startLoop() {
+    if (rafId) cancelAnimationFrame(rafId)
+    rafId = requestAnimationFrame(simLoop)
+}
+function _stopLoop() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null }
+}
+
+function _resetCalib() {
+    calibDone        = false
+    _waitingForCalib = false
+    bombPos          = null
+    _bombInitial     = null
+    _goUntil         = 0
+    calibEllipse.x = 144; calibEllipse.y = 414; calibEllipse.rx = 128; calibEllipse.ry = 131
+    resetTrackers()
+    resetWater()
+    initStream()
+    document.getElementById('okBtn').style.display = ''
+}
+
+// On first play: let 0.2 s of video run so the canvas shows a real frame,
+// then pause and wait for the user to drag the dot and press OK.
+video.addEventListener('play', () => {
+    if (!calibDone && !_waitingForCalib) {
+        _waitingForCalib = true
+        _startLoop()
+        setTimeout(() => { if (_waitingForCalib) video.pause() }, 200)
+        return
+    }
+    _startLoop()
+})
+
+// Keep loop alive while paused for calibration so the dot stays draggable.
+video.addEventListener('pause', () => { if (calibDone) _stopLoop() })
+video.addEventListener('ended', () => { logFlushFinal(); if (calibDone) _stopLoop() })
+
+function onCalibOK() {
+    calibDone        = true
+    _waitingForCalib = false
+    document.getElementById('okBtn').style.display = 'none'
+    // Redraw clean video frame (no overlay) before capturing NCC reference patches
+    drawVideoFrame(video, ctx)
+    const imgData = ctx.getImageData(0, 0, W, H)
+    initCandidateTrackers(imgData.data)
+    initWaterDetector(imgData.data)
+    initBomb()
+    // showGo() is called by tracker2.js after the 5s countdown + selection
+    video.play()
+}
+
+document.getElementById('upload').addEventListener('change', e => {
+    const file = e.target.files[0]
+    if (!file) return
+    _resetCalib()
+    _stopLoop()
+    video.src = URL.createObjectURL(file)
+})
+
+document.getElementById('playBtn').addEventListener('click', () => video.play())
+document.getElementById('pauseBtn').addEventListener('click', () => video.pause())
+document.getElementById('restartBtn').addEventListener('click', () => {
+    video.pause()
+    video.currentTime = 0
+    _resetCalib()
+    _stopLoop()
+    ctx.clearRect(0, 0, W, H)
+})
+</script>
+
+</body>
+</html>

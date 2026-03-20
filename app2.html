@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Stream Detector v2</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; background: #000; font-family: Arial, sans-serif; overflow: hidden; }
+
+/* ── Nav bar ── */
+#nav {
+    display: flex;
+    height: 44px;
+    background: #0d0d0d;
+    border-bottom: 1px solid #2a2a2a;
+    position: relative;
+    z-index: 10;
+    flex-shrink: 0;
+}
+.tab-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: color 0.15s;
+    border-bottom: 3px solid transparent;
+}
+.tab-btn.active {
+    color: #fff;
+    border-bottom: 3px solid #7788ff;
+}
+
+/* ── Screens ── */
+.screen { display: none; }
+
+/* ── Simulation screen ── */
+#simScreen {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 44px);
+}
+#simControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #111;
+    border-bottom: 1px solid #222;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+#simControls button, .file-btn {
+    padding: 6px 16px;
+    background: #1a1a3a;
+    color: #ccd;
+    border: 1px solid #446;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+#simControls button:hover, .file-btn:hover { background: #252550; }
+#simCanvasWrap {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    overflow: auto;
+    background: #000;
+    padding: 10px 0 0 0;
+}
+#simCanvas {
+    display: block;
+    width: 360px;
+    height: 640px;
+    background: #111;
+    flex-shrink: 0;
+}
+
+/* ── Camera screen ── */
+#camScreen {
+    position: relative;
+    height: calc(100vh - 44px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    background: #000;
+}
+#camCanvas {
+    display: block;
+    /* fill from the very top, no gap */
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(100vw, calc((100vh - 44px) * (360 / 640)));
+    height: calc(100vh - 44px);
+    background: #000;
+}
+#camStatus {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #888;
+    font-size: 15px;
+    text-align: center;
+    pointer-events: none;
+}
+
+video { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<div id="nav">
+    <button class="tab-btn active" data-tab="sim">Simulation</button>
+    <button class="tab-btn" data-tab="cam">Camera</button>
+</div>
+
+<!-- Simulation Screen -->
+<div id="simScreen" class="screen" style="display:flex;">
+    <div id="simControls">
+        <label class="file-btn">
+            Load Video
+            <input type="file" id="simUpload" accept="video/*" style="display:none">
+        </label>
+        <button id="simPlay">Play</button>
+        <button id="simPause">Pause</button>
+        <button id="simRestart">Restart</button>
+    </div>
+    <div id="simCanvasWrap">
+        <canvas id="simCanvas"></canvas>
+    </div>
+</div>
+
+<!-- Camera Screen -->
+<div id="camScreen" class="screen">
+    <canvas id="camCanvas"></canvas>
+    <div id="camStatus">Switch to Camera tab to start</div>
+</div>
+
+<video id="simVideo" playsinline></video>
+<video id="camVideo" autoplay playsinline muted></video>
+
+<script src="app2.js"></script>
+</body>
+</html>
