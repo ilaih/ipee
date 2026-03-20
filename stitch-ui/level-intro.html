@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "primary": "#0ddff2",
+                    "accent-gold": "#ffd700",
+                    "background-dark": "#102122",
+                },
+                fontFamily: { "display": ["Space Grotesk", "sans-serif"] },
+                borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+            },
+        },
+    }
+</script>
+<style>
+    .hexagon-mask { clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+    .neon-glow-cyan { box-shadow: 0 0 15px rgba(13, 223, 242, 0.4); }
+    body { min-height: max(640px, 100dvh); }
+</style>
+</head>
+<body class="bg-background-dark font-display antialiased text-slate-100 flex justify-center items-center min-h-screen">
+<div class="relative w-[360px] h-[640px] bg-background-dark overflow-hidden flex flex-col border border-primary/20 shadow-2xl">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between p-4 z-10">
+    <div class="w-7"></div>
+    <h2 class="text-primary text-xl font-bold tracking-widest uppercase italic">iPee</h2>
+    <div class="w-7"></div>
+  </div>
+
+  <!-- Get Ready label -->
+  <div class="flex justify-center pt-2 pb-1">
+    <span class="text-accent-gold/70 text-xs font-bold tracking-widest uppercase">Get Ready</span>
+  </div>
+
+  <!-- Level Badge (hexagon) -->
+  <div class="flex flex-col items-center pt-2 pb-6">
+    <div class="relative flex items-center justify-center w-36 h-36">
+      <div class="absolute inset-0 bg-accent-gold hexagon-mask opacity-20 blur-md"></div>
+      <div class="absolute inset-2 bg-background-dark border-2 border-accent-gold hexagon-mask flex flex-col items-center justify-center shadow-[inset_0_0_10px_rgba(255,215,0,0.5)]">
+        <span class="text-xs font-bold text-accent-gold/80 tracking-tighter uppercase">Level</span>
+        <span id="level-num" class="text-5xl font-bold text-slate-100 leading-none">1</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mission Card -->
+  <div class="px-6 flex-grow">
+    <div class="bg-primary/5 border border-primary/40 rounded-xl p-5 neon-glow-cyan">
+      <h3 class="text-primary text-xs font-bold uppercase tracking-widest mb-4 flex items-center gap-2">
+        <span class="material-symbols-outlined" style="font-size:16px">flag</span>
+        Mission
+      </h3>
+      <div id="bomb-goals" class="space-y-1">
+        <!-- Patched by parent after iframe load -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(13,223,242,0.15)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:26px">💣</span>
+            <span style="color:#94a3b8;font-size:14px;font-weight:500">Bomb 1</span>
+          </div>
+          <span style="color:#f1f5f9;font-weight:700;font-size:16px">5.0s</span>
+        </div>
+      </div>
+      <p class="text-slate-400 text-xs mt-4 text-center">Keep your stream on the 💣 until it explodes!</p>
+    </div>
+  </div>
+
+  <!-- Play Button -->
+  <div class="p-6 pt-4">
+    <button onclick="window.parent.postMessage('level:start','*')"
+      class="w-full bg-primary text-background-dark font-black text-lg py-4 rounded-lg flex items-center justify-center gap-2 uppercase tracking-tighter hover:brightness-110 active:scale-95 transition-all"
+      style="box-shadow: 0 0 20px rgba(13,223,242,0.6);">
+      Tap to Play
+      <span class="material-symbols-outlined font-black">play_arrow</span>
+    </button>
+  </div>
+
+  <!-- Background decorations -->
+  <div class="absolute -bottom-10 -left-10 size-40 bg-primary/10 rounded-full blur-3xl pointer-events-none"></div>
+  <div class="absolute top-1/4 -right-10 size-32 bg-accent-gold/5 rounded-full blur-3xl pointer-events-none"></div>
+</div>
+</body>
+</html>

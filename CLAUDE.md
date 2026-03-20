@@ -4,9 +4,13 @@
 
 | File | Role |
 |------|------|
-| `shared2.js` | Shared logic: canvas setup, video crop, calibration ellipse, bomb overlay, settings panel, GO flash |
+| `shared2.js` | Canvas constants (`W`, `H`, `ZOOM`) and `drawVideoFrame` — loaded first by all pages |
+| `settings2.js` | `settings` object, settings panel UI, `openSettings` / `closeSettings` |
+| `calib2.js` | Calibration ellipse state (`calibEllipse`, `calibDone`), `drawCalibOverlay`, `initCalibDrag` |
+| `levels2.js` | `LEVELS`, bomb/level state, `initBomb`, `updateBomb`, `drawBomb`, `advanceBomb`, `recalib`, `showLevelIntro`, `showLevelSuccess` |
 | `tracker2.js` | 8-candidate NCC tracking with 5s countdown selection; weighted-drift centroid position estimation |
 | `stream2.js` | Stream tip detection and hit scoring — frame diff, entrance gate, corridor search, hit timer |
+| `water2.js` | Toilet water surface detector — suppresses shimmer/splash in the bowl area |
 | `sim2.html` | Simulation UI — load video file, play/pause/restart, Settings button in controls bar |
 | `cam2.html` | Live camera UI — fullscreen canvas, auto camera selection, ⚙ settings gear top-right |
 | `server2.js` | Express-like static server on port 3001 — serves `cam2.html` at `/`, uses Let's Encrypt certs if present, falls back to `certs/key.pem` / `certs/cert.pem`, then plain HTTP |

@@ -75,10 +75,13 @@ video  { display: none; }
 
 <video id="video" playsinline></video>
 
+<script src="shared2.js"></script>
+<script src="settings2.js"></script>
+<script src="calib2.js"></script>
 <script src="tracker2.js"></script>
 <script src="stream2.js"></script>
-<script src="shared2.js"></script>
 <script src="water2.js"></script>
+<script src="levels2.js"></script>
 <script src="onboarding.js"></script>
 <script>
 const video  = document.getElementById('video')
@@ -98,14 +101,14 @@ function simLoop() {
         const imgData = ctx.getImageData(0, 0, W, H)
         updateTrackers(imgData.data)
         updateBomb()
-        if (!isCountdownActive()) {
+        if (!isCountdownActive() && !isLevelIntroActive()) {
             updateStream(imgData.data, video.currentTime * 1000)
             updateHit()
         }
         drawTrackerDots(ctx)
         drawWater(ctx)
         drawBomb(ctx)
-        if (!isCountdownActive()) drawStreamOverlay(ctx)
+        if (!isCountdownActive() && !isLevelIntroActive()) drawStreamOverlay(ctx)
         drawGoFlash(ctx)
     }
     if (!calibDone) drawCalibOverlay(ctx)
@@ -125,6 +128,11 @@ function _resetCalib() {
     _waitingForCalib = false
     bombPos          = null
     _bombInitial     = null
+    _bombDeltaX      = 0
+    _bombDeltaY      = 0
+    _bombIdx         = 0
+    _bombStates      = []
+    _levelIdx        = 0
     _goUntil         = 0
     calibEllipse.x = 144; calibEllipse.y = 414; calibEllipse.rx = 128; calibEllipse.ry = 131
     resetTrackers()
@@ -153,14 +161,16 @@ function onCalibOK() {
     calibDone        = true
     _waitingForCalib = false
     document.getElementById('okBtn').style.display = 'none'
-    // Redraw clean video frame (no overlay) before capturing NCC reference patches
-    drawVideoFrame(video, ctx)
-    const imgData = ctx.getImageData(0, 0, W, H)
-    initCandidateTrackers(imgData.data)
-    initWaterDetector(imgData.data)
-    initBomb()
-    // showGo() is called by tracker2.js after the 5s countdown + selection
-    video.play()
+    // Show level intro before starting the tracker countdown.
+    // Tracker/bomb init happens when user taps "Tap to Play".
+    showLevelIntro(() => {
+        drawVideoFrame(video, ctx)
+        const imgData = ctx.getImageData(0, 0, W, H)
+        initCandidateTrackers(imgData.data)
+        initWaterDetector(imgData.data)
+        initBomb()
+        video.play()
+    })
 }
 
 document.getElementById('upload').addEventListener('change', e => {

@@ -195,6 +195,11 @@ function logFlushFinal() { saveLog(); saveDetLog(); saveTrackerLog() }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+function resetHitTimer() {
+    hitStartTime = null
+    totalHitMs   = 0
+}
+
 function initStream() {
     _logSession  = String(Date.now())
     _logBuf      = []
@@ -478,6 +483,15 @@ function updateHit() {
         if (hitStartTime === null) hitStartTime = Date.now()
     } else {
         if (hitStartTime !== null) { totalHitMs += Date.now() - hitStartTime; hitStartTime = null }
+    }
+
+    // Check if active bomb's hit goal is reached
+    if (typeof advanceBomb === 'function') {
+        const b = typeof _bombStates !== 'undefined' ? _bombStates[_bombIdx] : null
+        if (b && !b.done) {
+            const live = hitStartTime !== null ? Date.now() - hitStartTime : 0
+            if (totalHitMs + live >= b.goalMs) advanceBomb()
+        }
     }
 }
 

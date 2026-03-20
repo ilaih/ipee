@@ -18,7 +18,7 @@
 //   • Low-quality trackers auto-downweight; they can't snap the position
 //   • One tracker temporarily losing lock barely moves the estimate
 //
-// ── CANDIDATE SELECTION (5-second countdown) ─────────────────────────────────
+// ── CANDIDATE SELECTION (3-second countdown) ─────────────────────────────────
 //
 // 8 candidates are placed immediately after the user presses OK:
 //
@@ -26,7 +26,7 @@
 //   Inner group (INNER_DIST from cx): I0=top  I1=bottom  I2=left  I3=right
 //
 // During the countdown every candidate runs NCC tracking and accumulates an
-// average quality score.  At 5 s the best OUTER_COUNT (3) outer and INNER_COUNT (2) inner
+// average quality score.  At 3 s the best OUTER_COUNT (3) outer and INNER_COUNT (2) inner
 // are selected, guaranteeing ≥1 outer and ≥1 inner in the final 5.
 // If one group has fewer valid trackers, the gap is filled from the other group.
 // showGo() fires once selection is complete.
@@ -45,7 +45,8 @@ const BOWL_NCC_MIN     = 0.30  // quality gate — below this, hold last known p
 const RESUME_NCC_MIN   = 0.50  // higher bar for resuming after out-of-frame pause
 
 // ── Tracking constants ────────────────────────────────────────────────────────
-const COUNTDOWN_MS    = 5000   // ms of candidate evaluation before selection
+const COUNTDOWN_MS         = 3000   // ms shown to user before selection fires (UX/display)
+const MIN_SELECTION_FRAMES = 20     // min rAF frames accumulated before selection is allowed
 const TRACKER_MIN_Q   = 0.30   // min quality for a tracker to vote on position
 const OUTER_COUNT     = 3      // trackers selected from outer group
 const INNER_COUNT     = 2      // trackers selected from inner group
@@ -318,7 +319,8 @@ function updateTrackers(data) {
             c.sumQ += c.tracker.quality
             c.frames++
         }
-        if (Date.now() - _countdownStart >= COUNTDOWN_MS) {
+        const _minFrames = Math.min(..._candidates.filter(c => c.tracker).map(c => c.frames))
+        if (Date.now() - _countdownStart >= COUNTDOWN_MS && _minFrames >= MIN_SELECTION_FRAMES) {
             _selectTrackers()
         }
     } else {
