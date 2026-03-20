@@ -39,6 +39,17 @@ const settings = {
     skipOnboarding:   false,
 }
 
+// Restore saved settings on startup (consent-gated writes handled in _saveSettings)
+try {
+    const _saved = JSON.parse(localStorage.getItem('ipee_settings') || '{}')
+    Object.assign(settings, _saved)
+} catch (_) {}
+
+function _saveSettings() {
+    if (typeof _hasConsent === 'function' && !_hasConsent()) return
+    localStorage.setItem('ipee_settings', JSON.stringify(settings))
+}
+
 // ── Settings panel (injected into body at DOMContentLoaded) ──────────────────
 function _row(content) {
     return `<div style="display:flex;align-items:center;justify-content:space-between;margin:7px 0">${content}</div>`
@@ -55,7 +66,7 @@ function _slider(key, label, min, max, step=1) {
         ${_label(label)}
         <input type="range" id="sp_${key}" min="${min}" max="${max}" step="${step}" value="${settings[key]}"
             style="width:110px;accent-color:#7788ff;margin:0 8px"
-            oninput="settings['${key}']=+this.value;document.getElementById('sv_${key}').textContent=this.value">
+            oninput="settings['${key}']=+this.value;document.getElementById('sv_${key}').textContent=this.value;_saveSettings()">
         <span id="sv_${key}" style="width:36px;text-align:right;color:#aaf;font-weight:bold;font-size:13px">${settings[key]}</span>
     `)
 }
@@ -64,7 +75,7 @@ function _check(key, label) {
         ${_label(label)}
         <input type="checkbox" id="sp_${key}" ${settings[key] ? 'checked' : ''}
             style="width:18px;height:18px;accent-color:#7788ff"
-            onchange="settings['${key}']=this.checked">
+            onchange="settings['${key}']=this.checked;_saveSettings()">
     `)
 }
 
@@ -118,6 +129,19 @@ function initSettingsPanel() {
         <button onclick="recalib()" style="display:block;width:100%;margin-top:14px;
             padding:10px;background:#3a1a1a;color:#fcc;border:1px solid #844;
             border-radius:8px;font-size:14px;cursor:pointer">↺ Recalibrate</button>
+
+        ${_sectionHead('Privacy')}
+        <button onclick="
+            if(confirm('Delete all saved data (settings, progress, stats)?')){
+                ['ipee_uid','ipee_age_ok','ipee_score','ipee_settings','ipee_consent']
+                    .forEach(k=>localStorage.removeItem(k));
+                location.reload();
+            }"
+            style="display:block;width:100%;padding:8px;background:#cc2222;color:#fff;
+                border:none;border-radius:6px;cursor:pointer;font-size:13px;margin-top:6px">
+            Clear my data
+        </button>
+
         <button onclick="closeSettings()" style="display:block;width:100%;margin-top:8px;
             padding:10px;background:#1a1a3a;color:#ccd;border:1px solid #446;
             border-radius:8px;font-size:14px;cursor:pointer">Close</button>

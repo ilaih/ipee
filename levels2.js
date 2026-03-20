@@ -27,6 +27,12 @@ let bombPos      = null   // points to _bombStates[_bombIdx].pos
 
 function isLevelIntroActive() { return _levelIntroActive }
 
+function restoreProgress() {
+    if (typeof getScore !== 'function') return
+    const saved = (getScore() || {}).gameLevel
+    if (saved != null) _levelIdx = Math.min(saved, LEVELS.length - 1)
+}
+
 function initBomb() {
     const level = LEVELS[_levelIdx]
     const e     = calibEllipse
@@ -40,6 +46,7 @@ function initBomb() {
     _bombDeltaY  = s.dy
     _bombInitial = s.initial
     bombPos      = s.pos
+    if (typeof saveScore === 'function') saveScore({ ...getScore(), gameLevel: _levelIdx })
     initStream()
     // tracker2.js starts 8 candidates + countdown; showGo() fires when done
 }
@@ -152,6 +159,7 @@ function drawBomb(ctx) {
 
 // ── Level advance ─────────────────────────────────────────────────────────────
 function advanceBomb() {
+    if (typeof recordHitMs === 'function') recordHitMs(_bombStates[_bombIdx].goalMs)
     _bombStates[_bombIdx].done = true
     _bombIdx++
     if (_bombIdx < _bombStates.length) {
@@ -186,6 +194,7 @@ function _recalibCore() {
 
 function recalib() {
     _levelIdx = 0   // manual recalibrate always restarts from level 1
+    if (typeof saveScore === 'function') saveScore({ ...getScore(), gameLevel: 0 })
     _recalibCore()
 }
 
@@ -198,34 +207,14 @@ function showLevelIntro(onStart) {
     const existing = document.getElementById('level-intro-overlay')
     if (existing) existing.remove()
 
+    const bombParams = level.bombs.map((b, i) => `bomb${i}=${b.goalMs / 1000}`).join('&')
+    const introSrc   = `stitch-ui/level-intro.html?level=${level.id}&${bombParams}`
+
     const div = document.createElement('div')
     div.id = 'level-intro-overlay'
     div.style.cssText = 'position:fixed;inset:0;z-index:9998;display:flex;align-items:center;justify-content:center;background:#102122'
-    div.innerHTML = '<iframe src="stitch-ui/level-intro.html" style="width:360px;height:640px;border:none;max-width:100vw;max-height:100vh"></iframe>'
+    div.innerHTML = `<iframe src="${introSrc}" style="width:360px;height:640px;border:none;max-width:100vw;max-height:100vh"></iframe>`
     document.body.appendChild(div)
-
-    const frame = div.querySelector('iframe')
-    function patchIntro() {
-        try {
-            const doc = frame.contentDocument
-            if (!doc || doc.readyState === 'loading') return
-            const numEl = doc.getElementById('level-num')
-            if (numEl) numEl.textContent = level.id
-            const goalsEl = doc.getElementById('bomb-goals')
-            if (goalsEl) {
-                goalsEl.innerHTML = level.bombs.map((b, i) => `
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(13,223,242,0.15)">
-                        <div style="display:flex;align-items:center;gap:12px">
-                            <span style="font-size:26px">💣</span>
-                            <span style="color:#94a3b8;font-size:14px;font-weight:500">Bomb ${i + 1}</span>
-                        </div>
-                        <span style="color:#f1f5f9;font-weight:700;font-size:16px">${(b.goalMs / 1000).toFixed(1)}s</span>
-                    </div>`).join('')
-            }
-        } catch (_) {}
-    }
-    if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') patchIntro()
-    else frame.addEventListener('load', patchIntro, { once: true })
 
     function _onMsg(e) {
         if (e.data === 'level:start') {
@@ -248,22 +237,9 @@ function showLevelSuccess() {
     const div = document.createElement('div')
     div.id = 'level-success-overlay'
     div.style.cssText = 'position:fixed;inset:0;z-index:9998;display:flex;align-items:center;justify-content:center;background:#102122'
-    div.innerHTML = '<iframe src="stitch-ui/level-success.html" style="width:360px;height:640px;border:none;max-width:100vw;max-height:100vh"></iframe>'
+    const successSrc = `stitch-ui/level-success.html?level=${levelId}&last=${isLastLevel ? 1 : 0}`
+    div.innerHTML = `<iframe src="${successSrc}" style="width:360px;height:640px;border:none;max-width:100vw;max-height:100vh"></iframe>`
     document.body.appendChild(div)
-
-    const frame = div.querySelector('iframe')
-    function patchSuccess() {
-        try {
-            const doc = frame.contentDocument
-            if (!doc || doc.readyState === 'loading') return
-            const titleEl = doc.getElementById('level-complete-title')
-            if (titleEl) titleEl.textContent = `Level ${levelId} Complete!`
-            const btnEl = doc.getElementById('next-btn-text')
-            if (btnEl) btnEl.textContent = isLastLevel ? 'Play Again' : 'Next Level →'
-        } catch (_) {}
-    }
-    if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') patchSuccess()
-    else frame.addEventListener('load', patchSuccess, { once: true })
 
     function _onMsg(e) {
         if (e.data === 'level:next') {

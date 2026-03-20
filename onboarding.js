@@ -1,11 +1,55 @@
 // onboarding.js — First-launch flow: device ID, age gate, camera load, level screen
 
-const USER_KEY  = 'ipee_uid'
-const AGE_KEY   = 'ipee_age_ok'
-const SCORE_KEY = 'ipee_score'
+const USER_KEY    = 'ipee_uid'
+const AGE_KEY     = 'ipee_age_ok'
+const SCORE_KEY   = 'ipee_score'
+const CONSENT_KEY = 'ipee_consent'
+
+function _hasConsent() { return localStorage.getItem(CONSENT_KEY) === '1' }
+
+// ── Consent banner ────────────────────────────────────────────────────────────
+function showConsentBanner() {
+    if (_hasConsent()) return
+    if (document.getElementById('ipee-consent-bar')) return
+
+    const bar = document.createElement('div')
+    bar.id = 'ipee-consent-bar'
+    bar.style.cssText = [
+        'position:fixed', 'bottom:0', 'left:0', 'right:0', 'z-index:99999',
+        'background:#0d1f20', 'border-top:1px solid rgba(13,223,242,0.3)',
+        'color:#cbd5e1', 'font-family:Arial,sans-serif', 'font-size:13px',
+        'padding:14px 16px 16px', 'display:flex', 'flex-direction:column', 'gap:10px'
+    ].join(';')
+    bar.innerHTML = `
+        <p style="margin:0;line-height:1.5">
+            We save your <strong style="color:#0ddff2">progress, settings and stats</strong>
+            in your browser\u2019s local storage \u2014 on this device only, no server, no tracking.
+            You can delete it anytime in <strong>Settings \u2192 Clear my data</strong>.
+        </p>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button id="ipee-consent-decline"
+                style="padding:8px 20px;background:transparent;color:#94a3b8;border:1px solid #334155;border-radius:6px;cursor:pointer;font-size:13px">
+                Decline
+            </button>
+            <button id="ipee-consent-accept"
+                style="padding:8px 20px;background:#0ddff2;color:#102122;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold">
+                Accept
+            </button>
+        </div>`
+    document.body.appendChild(bar)
+
+    document.getElementById('ipee-consent-accept').onclick = () => {
+        localStorage.setItem(CONSENT_KEY, '1')
+        bar.remove()
+    }
+    document.getElementById('ipee-consent-decline').onclick = () => {
+        bar.remove()  // hides for this session only; reappears on next visit
+    }
+}
 
 // ── Device ID ─────────────────────────────────────────────────────────────────
 function getOrCreateUID() {
+    if (!_hasConsent()) return 'anonymous'
     let uid = localStorage.getItem(USER_KEY)
     if (!uid) {
         uid = 'u-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9)
@@ -18,7 +62,10 @@ function getOrCreateUID() {
 function getScore() {
     try { return JSON.parse(localStorage.getItem(SCORE_KEY)) || {} } catch { return {} }
 }
-function saveScore(data) { localStorage.setItem(SCORE_KEY, JSON.stringify(data)) }
+function saveScore(data) {
+    if (!_hasConsent()) return
+    localStorage.setItem(SCORE_KEY, JSON.stringify(data))
+}
 
 function recordHitMs(ms) {
     const s = getScore()
@@ -77,6 +124,8 @@ function injectOverlays() {
 //   onDone        {fn}     — called when the user dismisses the level screen
 function startOnboarding(options = {}) {
     const { skipCameraLoad = false, onDone = null } = options
+
+    showConsentBanner()
 
     const uid = getOrCreateUID()
     console.log('[ipee] device uid:', uid)

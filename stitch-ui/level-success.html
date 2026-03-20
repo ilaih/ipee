@@ -121,6 +121,16 @@
 </div>
 
 <script>
+    // Populate from URL params (?level=N&last=0|1)
+    ;(function () {
+      const p    = new URLSearchParams(location.search)
+      const lvl  = p.get('level')
+      const last = p.get('last') === '1'
+      if (lvl)  document.getElementById('level-complete-title').textContent = `Level ${lvl} Complete!`
+      if (last) document.getElementById('next-btn-text').textContent = 'Play Again'
+    })()
+</script>
+<script>
     // Spawn confetti
     const colors = ['#0ddff2', '#ffd700', '#ff6b6b', '#a8ff78', '#ff9f43']
     const container = document.getElementById('confetti-container')

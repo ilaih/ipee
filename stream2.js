@@ -201,7 +201,7 @@ function resetHitTimer() {
 }
 
 function initStream() {
-    _logSession  = String(Date.now())
+    _logSession  = (typeof getOrCreateUID === 'function') ? getOrCreateUID() : String(Date.now())
     _logBuf      = []
     // Write ellipse metadata as first comment line
     const e = calibEllipse

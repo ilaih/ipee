@@ -128,6 +128,7 @@ function camLoop() {
 function onCalibOK() {
     calibDone = true
     document.getElementById('okBtn').style.display = 'none'
+    restoreProgress()
     // Show level intro before starting the tracker countdown.
     // Tracker/bomb init happens when user taps "Tap to Play".
     showLevelIntro(() => {

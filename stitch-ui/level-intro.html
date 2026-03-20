@@ -75,6 +75,27 @@
     </div>
   </div>
 
+  <!-- Populate from URL params (?level=N&bomb0=X.X&bomb1=X.X …) -->
+  <script>
+    (function () {
+      const p = new URLSearchParams(location.search)
+      const lvl = p.get('level')
+      if (lvl) document.getElementById('level-num').textContent = lvl
+      const goals = []
+      for (let i = 0; p.has('bomb' + i); i++) goals.push(parseFloat(p.get('bomb' + i)))
+      if (goals.length) {
+        document.getElementById('bomb-goals').innerHTML = goals.map((s, i) => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(13,223,242,0.15)">
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="font-size:26px">💣</span>
+              <span style="color:#94a3b8;font-size:14px;font-weight:500">Bomb ${i + 1}</span>
+            </div>
+            <span style="color:#f1f5f9;font-weight:700;font-size:16px">${s.toFixed(1)}s</span>
+          </div>`).join('')
+      }
+    })()
+  </script>
+
   <!-- Play Button -->
   <div class="p-6 pt-4">
     <button onclick="window.parent.postMessage('level:start','*')"
