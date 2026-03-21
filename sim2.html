@@ -190,17 +190,18 @@ function onCalibOK() {
 function startGameFlow() {
     restoreProgress()
     showLevelIntro(() => {
-        // Set _waitingForCalib=true BEFORE video.play() to skip the 0.2s auto-pause trick
         calibDone        = false
-        _waitingForCalib = true
+        _waitingForCalib = false
         document.getElementById('okBtn').style.display = ''
-        video.play()
+        video.currentTime = 0   // show first frame for ellipse placement
+        _startLoop()            // keep canvas live while video is paused
         _onCalibDone = () => {
             drawVideoFrame(video, ctx)
             const imgData = ctx.getImageData(0, 0, W, H)
             initCandidateTrackers(imgData.data)
             initWaterDetector(imgData.data)
             initBomb()
+            _waitingForCalib = true  // skip auto-pause on play
             video.play()
         }
     })

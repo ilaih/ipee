@@ -9,7 +9,6 @@ function _hasConsent() { return localStorage.getItem(CONSENT_KEY) === '1' }
 
 // ── Consent banner ────────────────────────────────────────────────────────────
 function showConsentBanner() {
-    if (_hasConsent()) return
     if (document.getElementById('ipee-consent-bar')) return
 
     const bar = document.createElement('div')

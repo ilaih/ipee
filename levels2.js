@@ -2,7 +2,7 @@
 
 // ── Level definitions ─────────────────────────────────────────────────────────
 const LEVELS = [
-    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 3000 }],                                           threeStarMs: 4000,  twoStarMs: 10000 },
+    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 3000 }],                                           threeStarMs: 4000,  twoStarMs: 30000 },
     { id: 2, bombs: [{ dx: 50, dy: -50, goalMs: 2000 }, { dx: -50, dy: -50, goalMs: 2000 }],       threeStarMs: 10000, twoStarMs: 16000 },
 ]
 
