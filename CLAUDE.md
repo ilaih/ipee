@@ -5,15 +5,17 @@
 | File | Role |
 |------|------|
 | `shared2.js` | Canvas constants (`W`, `H`, `ZOOM`) and `drawVideoFrame` — loaded first by all pages |
-| `settings2.js` | `settings` object, settings panel UI, `openSettings` / `closeSettings` |
+| `settings2.js` | `settings` object (persisted to `ipee_settings` in localStorage), settings panel UI, `openSettings` / `closeSettings`, `_saveSettings()`, Privacy → "Clear my data" button |
 | `calib2.js` | Calibration ellipse state (`calibEllipse`, `calibDone`), `drawCalibOverlay`, `initCalibDrag` |
-| `levels2.js` | `LEVELS`, bomb/level state, `initBomb`, `updateBomb`, `drawBomb`, `advanceBomb`, `recalib`, `showLevelIntro`, `showLevelSuccess` |
-| `tracker2.js` | 8-candidate NCC tracking with 5s countdown selection; weighted-drift centroid position estimation |
+| `levels2.js` | `LEVELS` (with `threeStarMs`/`twoStarMs` thresholds), bomb/level state, `initBomb`, `updateBomb`, `drawBomb`, `advanceBomb`, `recalib`, `restoreProgress`, `showLevelIntro`, `showLevelSuccess` |
+| `tracker2.js` | 8-candidate NCC tracking with 3s countdown selection; weighted-drift centroid position estimation |
+| `onboarding.js` | First-launch flow: consent banner (`showConsentBanner`), device UID (`getOrCreateUID` → `ipee_uid`), age gate, camera loading, level screen; score persistence (`getScore`/`saveScore`/`recordHitMs` → `ipee_score`) |
 | `stream2.js` | Stream tip detection and hit scoring — frame diff, entrance gate, corridor search, hit timer |
-| `water2.js` | Toilet water surface detector — suppresses shimmer/splash in the bowl area |
+| `water2.js` | Toilet water surface detector — 30th-percentile luminance threshold inside the bowl, bounding-box fit; `isInWaterZone(x,y)` used by `stream2.js` to suppress shimmer detections |
 | `sim2.html` | Simulation UI — load video file, play/pause/restart, Settings button in controls bar |
 | `cam2.html` | Live camera UI — fullscreen canvas, auto camera selection, ⚙ settings gear top-right |
-| `server2.js` | Express-like static server on port 3001 — serves `cam2.html` at `/`, uses Let's Encrypt certs if present, falls back to `certs/key.pem` / `certs/cert.pem`, then plain HTTP |
+| `server2.js` | Express-like static server on port 3001 — serves `cam2.html` at `/`, uses Let's Encrypt certs if present, falls back to `certs/key.pem` / `certs/cert.pem`, then plain HTTP. `SERVE_OBFUSCATED` flag (top of file): `true` → serves from `dist/` (minified build), `false` → serves raw source. `POST /log?session=<id>` appends CSV rows to `logs/log_<id>.txt` |
+| `ALGORITHMS.md` | Full project description + algorithm reference (project overview, detection pipeline, NCC tracker, water detector, stream state machine) |
 
 ---
 
@@ -54,7 +56,7 @@ drawImage(video, srcX, srcY, srcW, srcH, 0, 0, 360, 640)
 1. User loads a video file
 2. On first Play: video runs **0.2 s** → auto-pauses (gets a real frame on canvas)
 3. User drags the red dot onto the water → presses **OK**
-4. `onCalibOK`: captures canvas frame, calls `initCandidateTrackers` + `initBomb`, 5s countdown starts, `showGo()` fires automatically after selection
+4. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
 5. rAF loop runs continuously — keeps canvas live even while paused (for dot dragging)
 
 ### Camera flow (`cam2.html`)
@@ -62,11 +64,11 @@ drawImage(video, srcX, srcY, srcW, srcH, 0, 0, 360, 640)
 2. Camera probes all devices, picks the lowest-numbered "back" camera (main 1× rear lens, not ultrawide), requests 1920×1080
 3. On video play: rAF loop starts; calibration dot + instruction text are shown
 4. User drags the red dot onto the water → presses **OK**
-5. `onCalibOK`: captures live canvas frame, calls `initCandidateTrackers` + `initBomb`, 5s countdown starts
+5. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures live canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
 
 ---
 
-## Calibration ellipse (`shared2.js`)
+## Calibration ellipse (`calib2.js`)
 
 `calibEllipse = { x: W*0.5, y: H*0.40, rx: 80, ry: 55 }` — draggable + resizable ellipse, shown until `calibDone = true`. Position and size are **preserved across resets** so the user doesn't need to re-place it each restart.
 
@@ -89,7 +91,7 @@ All coordinates are scaled from CSS pixels → canvas pixels via `getBoundingCli
 
 ## NCC Patch Trackers (`tracker2.js`)
 
-**8 candidates** placed on OK press; best 4 selected after a 5-second countdown.
+**8 candidates** placed on OK press; best 4 selected after a **3-second countdown** (display UX) or `MIN_SELECTION_FRAMES = 20` rAF frames, whichever is later.
 
 | Group | Labels | Positions |
 |-------|--------|-----------|
@@ -97,7 +99,7 @@ All coordinates are scaled from CSS pixels → canvas pixels via `getBoundingCli
 | Inner | I0–I3 | 75px (INNER_DIST) from ellipse centre in 4 directions |
 
 During countdown all 8 run NCC tracking and accumulate average quality.
-At 5s: top 2 from each group selected → 4 active trackers (≥1 outer, ≥1 inner).
+At 3s (and ≥20 frames): top 2 from each group selected → 4 active trackers (≥1 outer, ≥1 inner).
 
 **Position estimation — weighted-drift centroid:**
 ```
@@ -123,7 +125,7 @@ Colour: cyan ≥ 0.60 (good), orange ≥ 0.30 (marginal), red (holding).
 
 ---
 
-## Bomb overlay (`shared2.js`)
+## Bomb overlay (`levels2.js`)
 
 A 💣 emoji placed at the **`calibEllipse` centre** — the target the player aims at.
 Appears glued to the scene — compensates for camera shake using tracker drift.
@@ -216,20 +218,67 @@ extrapolated to bomb Y must be within `±dirTolerance` of `bombPos.x`. When `|in
 
 ---
 
-## Settings panel (`shared2.js`)
+## Water surface detector (`water2.js`)
 
-`settings` object holds all tunable parameters (defaults below).
+Runs once at calibration (`initWaterDetector(pixels)` called from `onCalibOK`).
+
+**Algorithm:**
+1. Scan the inner **65% of `calibEllipse` radii** — well inside the rim, where only water + porcelain floor are visible
+2. Collect luminance values (`0.299R + 0.587G + 0.114B`) for every pixel in that inner ellipse
+3. Sort → threshold = **30th percentile** — this is the luminance level that separates the distinctly darker water pool from the brighter porcelain
+4. Find bounding box + centroid of all pixels below threshold
+5. Cap area: if `hwx × hwy > rx × ry × 0.15`, scale down to 15% of bowl area (prevents a false large detection swallowing the whole bowl)
+6. Store result as **relative offsets** from `calibEllipse` centre (`_waterRelCx`, `_waterRelCy`, `_waterRx`, `_waterRy`) — so when the tracker moves `calibEllipse`, the water zone follows automatically
+
+**`isInWaterZone(x, y)`** — rectangle test used by `stream2.js` every frame to skip water-zone pixels during IDLE state, suppressing shimmer and splash detections that would otherwise trigger false stream events.
+
+**`drawWater(ctx)`** — draws the detected rectangle as a semi-transparent blue fill with cyan stroke (visible only when `settings.showWater = true`).
+
+**Public API:** `initWaterDetector(pixels)`, `drawWater(ctx)`, `isInWaterZone(x, y)`, `resetWater()`.
+
+---
+
+## Settings panel (`settings2.js`)
+
+`settings` object holds all tunable parameters. Persisted to `ipee_settings` in localStorage on every change (consent-gated). Restored from localStorage on page load via `Object.assign(settings, _saved)`.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `motionThreshold` | 40 | Min per-channel pixel diff to count as motion |
-| `trailDuration` | 1500 ms | How long stream points persist |
-| `trackingDist` | 100 px | Max centroid jump per frame |
+| `sound` | true | Sound on/off — toggled from hamburger menu in `level-screen.html` |
+| `motionThreshold` | 46 | Min per-channel pixel diff to count as motion |
 | `frameSkip` | 1 | Process every Nth frame |
-| `showDebugStream` | false | Show corridor outline, entrance line, tip dot |
+| `showDebugStream` | true | Show corridor outline, entrance line, tip dot |
+| `useWaterFilter` | false | Enable `isInWaterZone` suppression in stream detection |
+| `showWater` | false | Draw the detected water bounding box overlay |
 
-**`initSettingsPanel()`** — injects the modal HTML into `document.body` at `DOMContentLoaded`. Both HTML files just load `shared2.js` — no duplicate panel markup needed.
+**`initSettingsPanel()`** — injects the modal HTML into `document.body` at `DOMContentLoaded`. Both HTML files load `settings2.js` — no duplicate panel markup needed. Includes a **Privacy** section with a "Clear my data" button that deletes all `ipee_*` localStorage keys and reloads the page.
+
+**`_saveSettings()`** — writes `settings` to `ipee_settings` localStorage. No-op if consent not given.
 
 **`openSettings()`** / **`closeSettings()`** — called from each page's settings button.
 - `sim2.html`: "Settings" button in the controls bar
 - `cam2.html`: ⚙ button fixed at top-right, overlaid on the canvas
+
+---
+
+## User identity and persistence (`onboarding.js`)
+
+All persistence is device-local (`localStorage` only). No external services. Data never leaves the device.
+
+| Key | Value | Description |
+|-----|-------|-------------|
+| `ipee_consent` | `'1'` | Set when user clicks Accept on the consent banner |
+| `ipee_uid` | `u-<ts36>-<rand7>` | Anonymous device ID, created on first consent |
+| `ipee_age_ok` | `'1'` | Set when user confirms they are 18+ |
+| `ipee_score` | JSON | `{ totalHitMs, totalHits, bestStreak, level, gameLevel, lastGameCompletedAt, bestLevelMs, levelStars[] }` |
+| `ipee_settings` | JSON | Full `settings` object snapshot |
+
+**Consent banner** (`showConsentBanner()`) — shown at every page load until the user clicks Accept. Fixed to the bottom of the screen, dark-themed. Decline hides it for the session only (reappears next visit, no writes).
+
+**`gameLevel`** in `ipee_score` — the next level index (0-based) to play. Written by `showLevelSuccess()` (advances to next) and `initBomb()` (saves current). `restoreProgress()` reads this and sets `_levelIdx`. `recalib()` resets it to 0.
+
+**`lastGameCompletedAt`** — `Date.now()` timestamp set in `showLevelSuccess()`. Used by `showLevelScreen()` in `onboarding.js` to enforce the 1-hour cooldown — Play button is disabled with a countdown if within 3 600 000 ms of last completion.
+
+**`levelStars`** — array where `levelStars[i]` is the best star rating (1–3) earned on level `i`. 3 stars = completed within `LEVELS[i].threeStarMs`, 2 stars = within `twoStarMs`, else 1 star. Time is measured from `initBomb()` to `showLevelSuccess()`.
+
+**`bestLevelMs`** — fastest level completion time across all plays (minimum elapsed ms).

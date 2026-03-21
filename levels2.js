@@ -2,8 +2,8 @@
 
 // ── Level definitions ─────────────────────────────────────────────────────────
 const LEVELS = [
-    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 5000 }] },
-    { id: 2, bombs: [{ dx: 50, dy: -50, goalMs: 2000 }, { dx: -50, dy: -50, goalMs: 2000 }] },
+    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 3000 }],                                           threeStarMs: 4000,  twoStarMs: 7000 },
+    { id: 2, bombs: [{ dx: 50, dy: -50, goalMs: 2000 }, { dx: -50, dy: -50, goalMs: 2000 }],       threeStarMs: 10000, twoStarMs: 16000 },
 ]
 
 // ── Bomb overlay ──────────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ let _levelIdx       = 0     // current level index into LEVELS[]
 let _bombIdx        = 0     // which bomb in current level is active
 let _bombStates     = []    // [{ dx, dy, goalMs, initial, pos, done }]
 let _levelIntroActive = false
+let _levelStartMs   = 0     // Date.now() when initBomb() was called — for star rating
 
 let _bombInitial = null   // alias → active bomb's initial (null-check guard)
 let _bombDeltaX  = 0
@@ -47,6 +48,7 @@ function initBomb() {
     _bombInitial = s.initial
     bombPos      = s.pos
     if (typeof saveScore === 'function') saveScore({ ...getScore(), gameLevel: _levelIdx })
+    _levelStartMs = Date.now()
     initStream()
     // tracker2.js starts 8 candidates + countdown; showGo() fires when done
 }
@@ -230,6 +232,21 @@ function showLevelIntro(onStart) {
 function showLevelSuccess() {
     const levelId     = LEVELS[_levelIdx].id
     const isLastLevel = _levelIdx >= LEVELS.length - 1
+    const lvl         = LEVELS[_levelIdx]
+    const elapsed     = Date.now() - _levelStartMs
+    const stars       = elapsed <= lvl.threeStarMs ? 3 : elapsed <= lvl.twoStarMs ? 2 : 1
+
+    // Save: next game level, completion timestamp, best level time, per-level stars
+    if (typeof getScore === 'function' && typeof saveScore === 'function') {
+        const s           = getScore() || {}
+        s.gameLevel       = isLastLevel ? 0 : _levelIdx + 1
+        s.lastGameCompletedAt = Date.now()
+        s.bestLevelMs     = s.bestLevelMs ? Math.min(s.bestLevelMs, elapsed) : elapsed
+        const levelStars  = s.levelStars || []
+        levelStars[_levelIdx] = Math.max(levelStars[_levelIdx] || 0, stars)
+        s.levelStars      = levelStars
+        saveScore(s)
+    }
 
     const existing = document.getElementById('level-success-overlay')
     if (existing) existing.remove()
@@ -237,7 +254,7 @@ function showLevelSuccess() {
     const div = document.createElement('div')
     div.id = 'level-success-overlay'
     div.style.cssText = 'position:fixed;inset:0;z-index:9998;display:flex;align-items:center;justify-content:center;background:#102122'
-    const successSrc = `stitch-ui/level-success.html?level=${levelId}&last=${isLastLevel ? 1 : 0}`
+    const successSrc = `stitch-ui/level-success.html?level=${levelId}&stars=${stars}&elapsedMs=${elapsed}`
     div.innerHTML = `<iframe src="${successSrc}" style="width:360px;height:640px;border:none;max-width:100vw;max-height:100vh"></iframe>`
     document.body.appendChild(div)
 
@@ -245,8 +262,12 @@ function showLevelSuccess() {
         if (e.data === 'level:next') {
             window.removeEventListener('message', _onMsg)
             div.remove()
-            _levelIdx = isLastLevel ? 0 : _levelIdx + 1
+            // Reset game state for next session (OK button shows, covered by level screen)
             _recalibCore()
+            // Return to main menu — player must recalibrate for next level
+            if (typeof showLevelScreen === 'function') {
+                showLevelScreen(null)
+            }
         }
     }
     window.addEventListener('message', _onMsg)

@@ -142,11 +142,8 @@ function startOnboarding(options = {}) {
         } else if (action === 'age:no') {
             document.getElementById('overlay-age').innerHTML =
                 '<div style="color:#fff;font-size:1.5rem;text-align:center;padding:3rem;font-family:sans-serif">This app is for adults only.<br><br>Please close this page.</div>'
-        } else if (action === 'play') {
-            window.removeEventListener('message', _onMessage)
-            hideAllOverlays()
-            if (onDone) onDone()
         }
+        // 'play' is handled by showLevelScreen's own listener
     }
     window.removeEventListener('message', window._ipeeMsg)  // remove any prior listener
     window._ipeeMsg = _onMessage
@@ -176,35 +173,59 @@ function showCameraLoading(onDone) {
 function showLevelScreen(onDone) {
     window._ipeeCameraReady = null
 
-    const s        = getScore()
-    const level    = computeLevel(s.totalHitMs)
-    const bestMs   = Math.round(s.bestStreak || 0)
-    const hits     = s.totalHits || 0
-    const xpNow    = (s.totalHitMs || 0) % 5000
-    const xpTarget = 5000
+    const s            = getScore()
+    const playerLevel  = computeLevel(s.totalHitMs)
+    const xpNow        = (s.totalHitMs || 0) % 5000
+    const xpTarget     = 5000
+    const levelStars   = s.levelStars || []
+    const totalStars   = levelStars.reduce((a, b) => a + (b || 0), 0)
+    const levelsBeaten = levelStars.filter(x => x > 0).length
+    const bestLevelMs  = s.bestLevelMs || 0
+    const nextLevel    = (s.gameLevel != null ? s.gameLevel : 0) + 1
+
+    // Cooldown check — one game per hour
+    const COOLDOWN_MS = 60 * 60 * 1000
+    const lastPlayed  = s.lastGameCompletedAt || 0
+    const remaining   = COOLDOWN_MS - (Date.now() - lastPlayed)
+    const onCooldown  = remaining > 0
 
     showOverlay('overlay-level')
 
-    // Patch live stats into the iframe (works whether it's already loaded or not)
     const frame = document.getElementById('frame-level')
     function patchFrame() {
         try {
             const doc = frame.contentDocument
             if (!doc || doc.readyState === 'loading') return
-            const q = (sel) => doc.querySelector(sel)
-            // Level number in the hexagon
-            const lvlEl = q('.text-4xl.font-bold')
-            if (lvlEl) lvlEl.textContent = level
+            const q = sel => doc.querySelector(sel)
 
-            // Stats values (3rd span.font-bold in each row)
-            const vals = doc.querySelectorAll('.text-slate-100.font-bold')
-            if (vals[0]) vals[0].textContent = bestMs ? `${bestMs}ms` : '0s'
-            if (vals[1]) vals[1].textContent = hits
-            if (vals[2]) vals[2].textContent = `${hits} pts`
+            const lvlEl = q('#player-level')
+            if (lvlEl) lvlEl.textContent = playerLevel
 
-            // XP centre text
-            const xpEl = q('.text-lg.font-bold')
-            if (xpEl) xpEl.textContent = `${xpNow}/${xpTarget}`
+            const xpCircle = q('#xp-circle')
+            if (xpCircle) {
+                const pct = Math.min(1, xpNow / xpTarget)
+                xpCircle.setAttribute('stroke-dashoffset', Math.round(100 - pct * 100))
+            }
+            const xpEl = q('#xp-text')
+            if (xpEl) xpEl.textContent = `${Math.round(xpNow)}/${xpTarget}`
+
+            const bestEl = q('#stat-best-time')
+            if (bestEl) bestEl.textContent = bestLevelMs ? `${(bestLevelMs / 1000).toFixed(1)}s` : '-'
+            const beatenEl = q('#stat-levels-beaten')
+            if (beatenEl) beatenEl.textContent = levelsBeaten
+            const starsEl = q('#stat-total-stars')
+            if (starsEl) starsEl.textContent = totalStars
+
+            const nextLvlEl = q('#next-level-label')
+            if (nextLvlEl) nextLvlEl.textContent = `Level ${nextLevel}`
+
+            const playBtn     = q('#play-btn')
+            const cooldownEl  = q('#cooldown-text')
+            if (onCooldown && playBtn) {
+                playBtn.setAttribute('disabled', 'true')
+                playBtn.style.cssText += ';opacity:0.45;cursor:not-allowed;pointer-events:none;background:#334155;box-shadow:none'
+                if (cooldownEl) cooldownEl.textContent = `Come back in ${Math.ceil(remaining / 60000)}m`
+            }
         } catch (_) {}
     }
 
@@ -214,9 +235,57 @@ function showLevelScreen(onDone) {
         frame.addEventListener('load', patchFrame, { once: true })
     }
 
-    // Tapping anywhere on the overlay after 2s also proceeds
-    setTimeout(() => {
-        document.getElementById('overlay-level')
-            .addEventListener('click', () => { hideAllOverlays(); if (onDone) onDone() }, { once: true })
-    }, 2000)
+    // Live countdown ticker — updates every 30s while overlay is open
+    let _cooldownTimer = null
+    if (onCooldown) {
+        _cooldownTimer = setInterval(() => {
+            const rem = COOLDOWN_MS - (Date.now() - lastPlayed)
+            try {
+                const doc = frame.contentDocument
+                const cooldownEl = doc.querySelector('#cooldown-text')
+                const playBtn    = doc.querySelector('#play-btn')
+                if (rem <= 0) {
+                    clearInterval(_cooldownTimer)
+                    if (playBtn) {
+                        playBtn.removeAttribute('disabled')
+                        playBtn.style.cssText = playBtn.style.cssText
+                            .replace(/opacity:[^;]+;?/g, '')
+                            .replace(/cursor:[^;]+;?/g, '')
+                            .replace(/pointer-events:[^;]+;?/g, '')
+                            .replace(/background:[^;]+;?/g, '')
+                            .replace(/box-shadow:[^;]+;?/g, '')
+                    }
+                    if (cooldownEl) cooldownEl.textContent = ''
+                } else {
+                    if (cooldownEl) cooldownEl.textContent = `Come back in ${Math.ceil(rem / 60000)}m`
+                }
+            } catch (_) {}
+        }, 30000)
+    }
+
+    // Self-contained 'play' listener (re-registered every time showLevelScreen is called)
+    function _onPlayMsg(e) {
+        if (e.data === 'play') {
+            window.removeEventListener('message', _onPlayMsg)
+            clearInterval(_cooldownTimer)
+            hideAllOverlays()
+            if (onDone) onDone()
+        } else if (e.data === 'open:settings') {
+            if (typeof openSettings === 'function') openSettings()
+        }
+    }
+    window.addEventListener('message', _onPlayMsg)
+
+    // Tap-anywhere fallback after 2s (disabled on cooldown)
+    if (!onCooldown) {
+        setTimeout(() => {
+            const overlay = document.getElementById('overlay-level')
+            if (overlay) overlay.addEventListener('click', () => {
+                window.removeEventListener('message', _onPlayMsg)
+                clearInterval(_cooldownTimer)
+                hideAllOverlays()
+                if (onDone) onDone()
+            }, { once: true })
+        }, 2000)
+    }
 }

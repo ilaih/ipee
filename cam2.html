@@ -194,6 +194,11 @@ async function startCamera() {
     await video.play()
 }
 
+// Handle messages from overlay iframes (e.g. "Open Settings" from menu)
+window.addEventListener('message', e => {
+    if (e.data === 'open:settings') openSettings()
+})
+
 // Show onboarding overlays, start camera in background behind them.
 startOnboarding()
 startCamera().catch(err => {

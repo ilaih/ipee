@@ -2,6 +2,8 @@
 
 // ── Settings state ────────────────────────────────────────────────────────────
 const settings = {
+    // General
+    sound:           true,
     // Motion Filter
     motionThreshold: 46,
     frameSkip:       1,
