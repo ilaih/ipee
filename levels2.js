@@ -232,7 +232,7 @@ function stopGame(reason) {
     _recalibCore()   // resets bomb/tracker state, shows OK button
 
     if (reason === 'timeout') {
-        // Mark cooldown so the play button is locked for 1 hour
+        // Mark cooldown so the play button is locked for X time (player must wait before trying again)
         if (typeof getScore === 'function' && typeof saveScore === 'function') {
             const s = getScore() || {}
             s.lastGameCompletedAt = Date.now()
@@ -254,11 +254,11 @@ function stopGame(reason) {
         document.body.appendChild(overlay)
         setTimeout(() => {
             overlay.remove()
-            if (typeof showLevelScreen === 'function') showLevelScreen(null)
+            if (typeof showMainScreen === 'function') showMainScreen(null)
         }, 2000)
     } else {
         // Manual quit / back button — go straight to menu (no delay, no cooldown)
-        if (typeof showLevelScreen === 'function') showLevelScreen(null)
+        if (typeof showMainScreen === 'function') showMainScreen(null)
     }
 }
 

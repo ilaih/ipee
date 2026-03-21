@@ -139,33 +139,42 @@ function camLoop() {
             updateStream(imgData.data, Date.now())
             updateHit()
         }
-        drawTrackerDots(ctx)
-        drawWater(ctx)
+        if (settings.showDebugInfo) drawTrackerDots(ctx)
+        if (settings.showDebugInfo) drawWater(ctx)
         drawBomb(ctx)
         drawTimeBar(ctx)
-        if (!isCountdownActive() && !isLevelIntroActive()) drawStreamOverlay(ctx)
+        if (settings.showDebugInfo && !isCountdownActive() && !isLevelIntroActive()) drawStreamOverlay(ctx)
         drawGoFlash(ctx)
     }
     if (!calibDone) drawCalibOverlay(ctx)
     // Show stop button only while actively playing (not during calibration, intro, or countdown)
-    stopBtn.style.display = (typeof isGameActive === 'function' && isGameActive()) ? '' : 'none'
+    stopBtn.style.display = (typeof isGameActive === 'function' && isGameActive()) ? 'block' : 'none'
     rafId = requestAnimationFrame(camLoop)
 }
+
+let _onCalibDone = null
 
 function onCalibOK() {
     calibDone = true
     document.getElementById('okBtn').style.display = 'none'
+    if (_onCalibDone) { _onCalibDone(); _onCalibDone = null }
+}
+
+function startGameFlow() {
     restoreProgress()
-    // Show level intro before starting the tracker countdown.
-    // Tracker/bomb init happens when user taps "Tap to Play".
     showLevelIntro(() => {
-        drawVideoFrame(video, ctx)
-        const imgData = ctx.getImageData(0, 0, W, H)
-        initCandidateTrackers(imgData.data)
-        initWaterDetector(imgData.data)
-        initBomb()
+        calibDone = false
+        document.getElementById('okBtn').style.display = ''
+        _onCalibDone = () => {
+            drawVideoFrame(video, ctx)
+            const imgData = ctx.getImageData(0, 0, W, H)
+            initCandidateTrackers(imgData.data)
+            initWaterDetector(imgData.data)
+            initBomb()
+        }
     })
 }
+window._ipeeStartGame = startGameFlow
 
 video.addEventListener('play', () => {
     statusEl.style.display = 'none'
@@ -223,7 +232,7 @@ async function startCamera() {
 
 // Handle messages from overlay iframes (e.g. "Open Settings" from menu)
 window.addEventListener('message', e => {
-    if (e.data === 'open:settings') openSettings()
+    if (e.data === 'open:settings' && settings.showDebugInfo) openSettings()
 })
 
 // Hardware back button (Android) — intercept when game is active
@@ -232,6 +241,11 @@ window.addEventListener('popstate', () => {
         stopGame('back')
     }
 })
+
+// Default showDebugInfo to false on cam (sim defaults to true via settings2.js)
+if (!('showDebugInfo' in JSON.parse(localStorage.getItem('ipee_settings') || '{}'))) {
+    settings.showDebugInfo = false
+}
 
 // Show onboarding overlays, start camera in background behind them.
 startOnboarding()

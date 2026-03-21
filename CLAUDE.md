@@ -9,7 +9,7 @@
 | `calib2.js` | Calibration ellipse state (`calibEllipse`, `calibDone`), `drawCalibOverlay`, `initCalibDrag` |
 | `levels2.js` | `LEVELS` (with `threeStarMs`/`twoStarMs` thresholds), bomb/level state, `initBomb`, `updateBomb`, `drawBomb`, `advanceBomb`, `recalib`, `restoreProgress`, `showLevelIntro`, `showLevelSuccess` |
 | `tracker2.js` | 8-candidate NCC tracking with 3s countdown selection; weighted-drift centroid position estimation |
-| `onboarding.js` | First-launch flow: consent banner (`showConsentBanner`), device UID (`getOrCreateUID` → `ipee_uid`), age gate, camera loading, level screen; score persistence (`getScore`/`saveScore`/`recordHitMs` → `ipee_score`) |
+| `onboarding.js` | Launch flow (every page load): consent banner (`showConsentBanner`), device UID (`getOrCreateUID` → `ipee_uid`), age gate → main screen → camera loading; score persistence (`getScore`/`saveScore`/`recordHitMs` → `ipee_score`) |
 | `stream2.js` | Stream tip detection and hit scoring — frame diff, entrance gate, corridor search, hit timer |
 | `water2.js` | Toilet water surface detector — 30th-percentile luminance threshold inside the bowl, bounding-box fit; `isInWaterZone(x,y)` used by `stream2.js` to suppress shimmer detections |
 | `sim2.html` | Simulation UI — load video file, play/pause/restart, Settings button in controls bar |
@@ -52,19 +52,30 @@ drawImage(video, srcX, srcY, srcW, srcH, 0, 0, 360, 640)
 | Simulation | `sim2.html` | — |
 | Live camera | `cam2.html` | `/` on port 3001 |
 
+### Screen order (both modes)
+1. **Age gate** — shown on every page load (no skip for returning users)
+2. **Camera loading** (`stitch-ui/camera-loading.html`) — shown immediately after age gate confirmed
+3. **Main screen** (`stitch-ui/main-screen.html`) — stats + Play button; shown when camera/video is ready
+4. **Level intro** — level name + goal; "Tap to Play" reveals calibration
+5. **Calibration** — ellipse drag + OK button (shown after "Tap to Play" on level intro)
+6. **3s countdown** → gameplay → **Level success** / timeout → back to main screen (step 3)
+
 ### Simulation flow (`sim2.html`)
-1. User loads a video file
-2. On first Play: video runs **0.2 s** → auto-pauses (gets a real frame on canvas)
-3. User drags the red dot onto the water → presses **OK**
-4. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
-5. rAF loop runs continuously — keeps canvas live even while paused (for dot dragging)
+1. Page loads → `startOnboarding({ onCameraLoading: ... })` runs automatically
+2. Age gate appears → user confirms → camera loading overlay appears → system file dialog opens automatically
+3. User picks a video file → camera loading dismissed → main screen shown
+4. Play pressed → overlays dismissed → video plays **0.2 s** → auto-pauses
+5. User drags calibration ellipse onto toilet bowl → presses **OK**
+6. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
+7. rAF loop runs continuously — keeps canvas live even while paused (for ellipse dragging)
 
 ### Camera flow (`cam2.html`)
-1. Page loads → `startCamera()` runs automatically
+1. Page loads → `startCamera()` + `startOnboarding()` run automatically
 2. Camera probes all devices, picks the lowest-numbered "back" camera (main 1× rear lens, not ultrawide), requests 1920×1080
-3. On video play: rAF loop starts; calibration dot + instruction text are shown
-4. User drags the red dot onto the water → presses **OK**
-5. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures live canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
+3. Age gate appears → user confirms → camera loading overlay appears → dismissed when camera is live → main screen shown
+4. Play pressed → overlays dismissed → calibration ellipse visible on live camera feed
+5. User drags calibration ellipse onto toilet bowl → presses **OK**
+6. `onCalibOK`: calls `restoreProgress()`, then `showLevelIntro(callback)`; callback captures live canvas frame, calls `initCandidateTrackers` + `initBomb`, 3s countdown starts
 
 ---
 
@@ -244,7 +255,7 @@ Runs once at calibration (`initWaterDetector(pixels)` called from `onCalibOK`).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `sound` | true | Sound on/off — toggled from hamburger menu in `level-screen.html` |
+| `sound` | true | Sound on/off — toggled from hamburger menu in `main-screen.html` |
 | `motionThreshold` | 46 | Min per-channel pixel diff to count as motion |
 | `frameSkip` | 1 | Process every Nth frame |
 | `showDebugStream` | true | Show corridor outline, entrance line, tip dot |
@@ -277,7 +288,7 @@ All persistence is device-local (`localStorage` only). No external services. Dat
 
 **`gameLevel`** in `ipee_score` — the next level index (0-based) to play. Written by `showLevelSuccess()` (advances to next) and `initBomb()` (saves current). `restoreProgress()` reads this and sets `_levelIdx`. `recalib()` resets it to 0.
 
-**`lastGameCompletedAt`** — `Date.now()` timestamp set in `showLevelSuccess()`. Used by `showLevelScreen()` in `onboarding.js` to enforce the 1-hour cooldown — Play button is disabled with a countdown if within 3 600 000 ms of last completion.
+**`lastGameCompletedAt`** — `Date.now()` timestamp set in `showLevelSuccess()`. Used by `showMainScreen()` in `onboarding.js` to enforce the X time cooldown — Play button is disabled with a countdown if within 3 600 000 ms of last completion.
 
 **`levelStars`** — array where `levelStars[i]` is the best star rating (1–3) earned on level `i`. 3 stars = completed within `LEVELS[i].threeStarMs`, 2 stars = within `twoStarMs`, else 1 star. Time is measured from `initBomb()` to `showLevelSuccess()`.
 

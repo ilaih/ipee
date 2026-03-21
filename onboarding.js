@@ -111,8 +111,8 @@ function injectOverlays() {
     <div class="ipee-overlay" id="overlay-camera">
       <iframe src="stitch-ui/camera-loading.html"></iframe>
     </div>
-    <div class="ipee-overlay" id="overlay-level">
-      <iframe src="stitch-ui/level-screen.html" id="frame-level"></iframe>
+    <div class="ipee-overlay" id="overlay-main">
+      <iframe src="stitch-ui/main-screen.html" id="frame-main"></iframe>
     </div>
     `
     document.body.prepend(wrapper)
@@ -120,10 +120,10 @@ function injectOverlays() {
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 // options:
-//   skipCameraLoad {bool}  — skip the camera loading screen (sim mode)
-//   onDone        {fn}     — called when the user dismisses the level screen
+//   onCameraLoading {fn}  — called as soon as the camera-loading overlay is shown
+//                           (sim mode uses this to immediately trigger the file picker)
 function startOnboarding(options = {}) {
-    const { skipCameraLoad = false, onDone = null } = options
+    const { onCameraLoading = null } = options
 
     showConsentBanner()
 
@@ -136,41 +136,38 @@ function startOnboarding(options = {}) {
     function _onMessage(e) {
         const action = e.data
         if (action === 'age:yes') {
-            localStorage.setItem(AGE_KEY, '1')
-            if (skipCameraLoad) showLevelScreen(onDone)
-            else showCameraLoading(onDone)
+            showCameraLoading(() => showMainScreen(null), onCameraLoading)
         } else if (action === 'age:no') {
             document.getElementById('overlay-age').innerHTML =
                 '<div style="color:#fff;font-size:1.5rem;text-align:center;padding:3rem;font-family:sans-serif">This app is for adults only.<br><br>Please close this page.</div>'
         }
-        // 'play' is handled by showLevelScreen's own listener
+        // 'play' is handled by showMainScreen's own listener
     }
     window.removeEventListener('message', window._ipeeMsg)  // remove any prior listener
     window._ipeeMsg = _onMessage
     window.addEventListener('message', _onMessage)
 
-    if (localStorage.getItem(AGE_KEY) === '1') {
-        if (skipCameraLoad) showLevelScreen(onDone)
-        else showCameraLoading(onDone)
-    } else {
-        showOverlay('overlay-age')
-    }
+    // Always show age gate on every page load
+    showOverlay('overlay-age')
 }
 
-function showCameraLoading(onDone) {
+function showCameraLoading(onDone, onShow) {
     showOverlay('overlay-camera')
+    if (onShow) onShow()
 
-    // If the video is already playing (camera started before age gate was dismissed),
-    // advance immediately — otherwise wait for the video.play signal.
+    function _advance() { hideAllOverlays(); if (onDone) onDone() }
+
+    // If the video is already playing (camera started before Play was pressed),
+    // advance immediately — otherwise wait for the _ipeeCameraReady signal.
     const vid = document.getElementById('video')
     if (vid && !vid.paused && vid.readyState >= 2) {
-        showLevelScreen(onDone)
+        _advance()
     } else {
-        window._ipeeCameraReady = () => showLevelScreen(onDone)
+        window._ipeeCameraReady = _advance
     }
 }
 
-function showLevelScreen(onDone) {
+function showMainScreen(onDone) {
     window._ipeeCameraReady = null
 
     const s            = getScore()
@@ -183,15 +180,15 @@ function showLevelScreen(onDone) {
     const bestLevelMs  = s.bestLevelMs || 0
     const nextLevel    = (s.gameLevel != null ? s.gameLevel : 0) + 1
 
-    // Cooldown check — one game per hour
-    const COOLDOWN_MS = 60 * 60 * 1000
+    // Cooldown check — one game per X time
+    const COOLDOWN_MS = 1 * 60 * 1000
     const lastPlayed  = s.lastGameCompletedAt || 0
     const remaining   = COOLDOWN_MS - (Date.now() - lastPlayed)
     const onCooldown  = remaining > 0
 
-    showOverlay('overlay-level')
+    showOverlay('overlay-main')
 
-    const frame = document.getElementById('frame-level')
+    const frame = document.getElementById('frame-main')
     function patchFrame() {
         try {
             const doc = frame.contentDocument
@@ -263,15 +260,14 @@ function showLevelScreen(onDone) {
         }, 30000)
     }
 
-    // Self-contained 'play' listener (re-registered every time showLevelScreen is called)
+    // Self-contained 'play' listener (re-registered every time showMainScreen is called)
     function _onPlayMsg(e) {
         if (e.data === 'play') {
             window.removeEventListener('message', _onPlayMsg)
             clearInterval(_cooldownTimer)
             hideAllOverlays()
-            if (onDone) onDone()
-        } else if (e.data === 'open:settings') {
-            if (typeof openSettings === 'function') openSettings()
+            const fn = onDone || window._ipeeStartGame
+            if (fn) fn()
         }
     }
     window.addEventListener('message', _onPlayMsg)
@@ -279,12 +275,13 @@ function showLevelScreen(onDone) {
     // Tap-anywhere fallback after 2s (disabled on cooldown)
     if (!onCooldown) {
         setTimeout(() => {
-            const overlay = document.getElementById('overlay-level')
+            const overlay = document.getElementById('overlay-main')
             if (overlay) overlay.addEventListener('click', () => {
                 window.removeEventListener('message', _onPlayMsg)
                 clearInterval(_cooldownTimer)
                 hideAllOverlays()
-                if (onDone) onDone()
+                const fn = onDone || window._ipeeStartGame
+                if (fn) fn()
             }, { once: true })
         }, 2000)
     }

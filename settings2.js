@@ -25,6 +25,7 @@ const settings = {
     useRimExclusion:  true,
     showRimExclusion: true,
     // Debug
+    showDebugInfo:    true,
     showDebugStream:  true,
     showStreamPoints: true,
     showTrackers:     true,
@@ -84,7 +85,7 @@ function _check(key, label) {
 function initSettingsPanel() {
     const panel = `
     <div id="settingsOverlay" style="display:none;position:fixed;inset:0;
-        background:rgba(0,0,0,0.55);z-index:500"
+        background:rgba(0,0,0,0.55);z-index:99999"
         onclick="if(event.target===this)closeSettings()">
       <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
           background:rgba(8,8,24,0.98);border:1px solid #446;border-radius:14px;
@@ -120,6 +121,7 @@ function initSettingsPanel() {
         ${_check('useWaterFilter','Water Zone Filter')}
 
         ${_sectionHead('Debug')}
+        ${_check('showDebugInfo','Show Debug Info')}
         ${_check('skipOnboarding','Skip Opening Screens')}
         ${_check('showTrackers','Tracking Ellipse + Dots')}
         ${_check('showStreamPoints','Motion Points (green)')}

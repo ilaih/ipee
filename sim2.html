@@ -55,6 +55,22 @@ canvas { display: block; width: 360px; height: 640px; background: #111; flex-shr
 }
 #okBtn:hover { background: #ee3333; }
 
+#stopBtn {
+    display: none;
+    margin-top: 8px;
+    padding: 8px 36px;
+    background: rgba(180, 30, 30, 0.9);
+    color: #fff;
+    border: 1px solid rgba(255, 80, 80, 0.5);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+}
+#stopBtn:hover { background: rgb(200, 40, 40); }
+
 video  { display: none; }
 </style>
 </head>
@@ -71,6 +87,7 @@ video  { display: none; }
 <div id="canvasWrap">
     <canvas id="canvas"></canvas>
     <button id="okBtn" onclick="onCalibOK()">OK</button>
+    <button id="stopBtn" onclick="stopGame('manual')">■ Stop</button>
 </div>
 
 <video id="video" playsinline></video>
@@ -84,13 +101,15 @@ video  { display: none; }
 <script src="levels2.js"></script>
 <script src="onboarding.js"></script>
 <script>
-const video  = document.getElementById('video')
-const canvas = document.getElementById('canvas')
-const ctx    = canvas.getContext('2d')
+const video   = document.getElementById('video')
+const canvas  = document.getElementById('canvas')
+const ctx     = canvas.getContext('2d')
 canvas.width  = W
 canvas.height = H
 
 initCalibDrag(canvas)
+
+const simStopBtn = document.getElementById('stopBtn')
 
 let rafId            = null
 let _waitingForCalib = false  // true while paused waiting for the user to press OK
@@ -105,13 +124,15 @@ function simLoop() {
             updateStream(imgData.data, video.currentTime * 1000)
             updateHit()
         }
-        drawTrackerDots(ctx)
-        drawWater(ctx)
+        if (settings.showDebugInfo) drawTrackerDots(ctx)
+        if (settings.showDebugInfo) drawWater(ctx)
         drawBomb(ctx)
-        if (!isCountdownActive() && !isLevelIntroActive()) drawStreamOverlay(ctx)
+        drawTimeBar(ctx)
+        if (settings.showDebugInfo && !isCountdownActive() && !isLevelIntroActive()) drawStreamOverlay(ctx)
         drawGoFlash(ctx)
     }
     if (!calibDone) drawCalibOverlay(ctx)
+    simStopBtn.style.display = isGameActive() ? 'block' : 'none'
     rafId = requestAnimationFrame(simLoop)   // always keep running
 }
 
@@ -157,22 +178,34 @@ video.addEventListener('play', () => {
 video.addEventListener('pause', () => { if (calibDone) _stopLoop() })
 video.addEventListener('ended', () => { logFlushFinal(); if (calibDone) _stopLoop() })
 
+let _onCalibDone = null
+
 function onCalibOK() {
     calibDone        = true
     _waitingForCalib = false
     document.getElementById('okBtn').style.display = 'none'
+    if (_onCalibDone) { _onCalibDone(); _onCalibDone = null }
+}
+
+function startGameFlow() {
     restoreProgress()
-    // Show level intro before starting the tracker countdown.
-    // Tracker/bomb init happens when user taps "Tap to Play".
     showLevelIntro(() => {
-        drawVideoFrame(video, ctx)
-        const imgData = ctx.getImageData(0, 0, W, H)
-        initCandidateTrackers(imgData.data)
-        initWaterDetector(imgData.data)
-        initBomb()
+        // Set _waitingForCalib=true BEFORE video.play() to skip the 0.2s auto-pause trick
+        calibDone        = false
+        _waitingForCalib = true
+        document.getElementById('okBtn').style.display = ''
         video.play()
+        _onCalibDone = () => {
+            drawVideoFrame(video, ctx)
+            const imgData = ctx.getImageData(0, 0, W, H)
+            initCandidateTrackers(imgData.data)
+            initWaterDetector(imgData.data)
+            initBomb()
+            video.play()
+        }
     })
 }
+window._ipeeStartGame = startGameFlow
 
 document.getElementById('upload').addEventListener('change', e => {
     const file = e.target.files[0]
@@ -180,19 +213,17 @@ document.getElementById('upload').addEventListener('change', e => {
     _resetCalib()
     _stopLoop()
     video.src = URL.createObjectURL(file)
+    if (window._ipeeCameraReady) { window._ipeeCameraReady(); window._ipeeCameraReady = null }
+    video.play()
 })
 
-let _onboardingDone = false
-document.getElementById('playBtn').addEventListener('click', () => {
-    if (!_onboardingDone && !settings.skipOnboarding) {
-        startOnboarding({
-            skipCameraLoad: true,
-            onDone: () => { _onboardingDone = true; video.play() }
-        })
-    } else {
-        video.play()
-    }
+document.getElementById('playBtn').addEventListener('click', () => video.play())
+window.addEventListener('message', e => {
+    if (e.data === 'open:settings' && settings.showDebugInfo) openSettings()
 })
+
+startOnboarding({ onCameraLoading: () => document.getElementById('upload').click() })
+
 document.getElementById('pauseBtn').addEventListener('click', () => video.pause())
 document.getElementById('restartBtn').addEventListener('click', () => {
     video.pause()
