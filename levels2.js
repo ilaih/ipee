@@ -2,7 +2,7 @@
 
 // ── Level definitions ─────────────────────────────────────────────────────────
 const LEVELS = [
-    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 3000 }],                                           threeStarMs: 4000,  twoStarMs: 7000 },
+    { id: 1, bombs: [{ dx: 50, dy: -50, goalMs: 3000 }],                                           threeStarMs: 4000,  twoStarMs: 10000 },
     { id: 2, bombs: [{ dx: 50, dy: -50, goalMs: 2000 }, { dx: -50, dy: -50, goalMs: 2000 }],       threeStarMs: 10000, twoStarMs: 16000 },
 ]
 
@@ -20,6 +20,7 @@ let _bombIdx        = 0     // which bomb in current level is active
 let _bombStates     = []    // [{ dx, dy, goalMs, initial, pos, done }]
 let _levelIntroActive = false
 let _levelStartMs   = 0     // Date.now() when initBomb() was called — for star rating
+let _stopInProgress = false // guard: prevent double-stop from timeout + button simultaneously
 
 let _bombInitial = null   // alias → active bomb's initial (null-check guard)
 let _bombDeltaX  = 0
@@ -27,6 +28,11 @@ let _bombDeltaY  = 0
 let bombPos      = null   // points to _bombStates[_bombIdx].pos
 
 function isLevelIntroActive() { return _levelIntroActive }
+
+// True while the player is actively aiming (bombs placed, countdown done, game not finishing)
+function isGameActive() {
+    return _bombStates.length > 0 && !_levelIntroActive && !isCountdownActive()
+}
 
 function restoreProgress() {
     if (typeof getScore !== 'function') return
@@ -48,13 +54,25 @@ function initBomb() {
     _bombInitial = s.initial
     bombPos      = s.pos
     if (typeof saveScore === 'function') saveScore({ ...getScore(), gameLevel: _levelIdx })
-    _levelStartMs = Date.now()
+    _levelStartMs   = 0     // set to Date.now() in showGo() once countdown ends
+    _stopInProgress = false
+    // Push a history entry so the phone back button can be intercepted via popstate
+    history.pushState({ ipeeGame: true }, '')
     initStream()
     // tracker2.js starts 8 candidates + countdown; showGo() fires when done
 }
 
 function updateBomb() {
     if (!_bombStates.length || !bombPos) return
+
+    // Auto-stop if elapsed time exceeds twoStarMs × 1.3 (game is no longer winnable at 1 star)
+    if (!isCountdownActive() && _levelStartMs > 0) {
+        const limit = LEVELS[_levelIdx].twoStarMs * 1.3
+        if (Date.now() - _levelStartMs > limit) {
+            stopGame('timeout')
+            return
+        }
+    }
 
     const est = getEstimatedCenter()
     if (!est) return
@@ -200,6 +218,50 @@ function recalib() {
     _recalibCore()
 }
 
+// ── Stop game ─────────────────────────────────────────────────────────────────
+// reason: 'timeout' | 'manual' | 'back'
+// timeout  → cooldown saved (pee happened), brief "Time's Up" overlay shown
+// manual/back → straight to menu, no cooldown (player chose to quit)
+function stopGame(reason) {
+    if (_stopInProgress) return
+    _stopInProgress = true
+
+    // Clean up any lingering history entry we pushed (prevents double-pop)
+    if (history.state && history.state.ipeeGame) history.back()
+
+    _recalibCore()   // resets bomb/tracker state, shows OK button
+
+    if (reason === 'timeout') {
+        // Mark cooldown so the play button is locked for 1 hour
+        if (typeof getScore === 'function' && typeof saveScore === 'function') {
+            const s = getScore() || {}
+            s.lastGameCompletedAt = Date.now()
+            saveScore(s)
+        }
+        // Show a brief "Time's Up" screen then go to menu
+        const overlay = document.createElement('div')
+        overlay.id = 'stop-overlay'
+        overlay.style.cssText = [
+            'position:fixed', 'inset:0', 'z-index:9999',
+            'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+            'gap:12px', 'background:#102122',
+            'font-family:"Space Grotesk",Arial,sans-serif'
+        ].join(';')
+        overlay.innerHTML = `
+            <div style="font-size:60px">⏱️</div>
+            <div style="color:#0ddff2;font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:2px">Time's Up!</div>
+            <div style="color:#94a3b8;font-size:14px">Aim faster next time</div>`
+        document.body.appendChild(overlay)
+        setTimeout(() => {
+            overlay.remove()
+            if (typeof showLevelScreen === 'function') showLevelScreen(null)
+        }, 2000)
+    } else {
+        // Manual quit / back button — go straight to menu (no delay, no cooldown)
+        if (typeof showLevelScreen === 'function') showLevelScreen(null)
+    }
+}
+
 // ── Level overlays ────────────────────────────────────────────────────────────
 // onStart — called when user taps "Tap to Play"; should initCandidateTrackers + initBomb
 function showLevelIntro(onStart) {
@@ -273,10 +335,51 @@ function showLevelSuccess() {
     window.addEventListener('message', _onMsg)
 }
 
+// ── Time bar ──────────────────────────────────────────────────────────────────
+// Red HP bar drawn at the bottom of the canvas. Starts full, drains to zero
+// over twoStarMs × 1.3. Only visible after the countdown ends.
+function drawTimeBar(ctx) {
+    if (!isGameActive() || _levelStartMs === 0) return
+
+    const timeLimit = LEVELS[_levelIdx].twoStarMs * 1.3
+    const elapsed   = Date.now() - _levelStartMs
+    const pct       = Math.max(0, 1 - elapsed / timeLimit)
+
+    const BAR_H = 10
+    const BAR_Y = H - BAR_H
+
+    // Dark track
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillRect(0, BAR_Y, W, BAR_H)
+
+    if (pct > 0) {
+        // Pulse faster as time runs low
+        const pulse = pct < 0.25
+            ? 0.75 + 0.25 * Math.sin(Date.now() * 0.018)
+            : 1
+
+        // Colour shifts red → deep red → bright red as bar drains
+        const r = 255
+        const g = Math.round(pct > 0.5 ? 60 * (pct - 0.5) * 2 : 0)
+        ctx.globalAlpha = pulse
+        ctx.fillStyle = `rgb(${r},${g},0)`
+        ctx.fillRect(0, BAR_Y, Math.round(W * pct), BAR_H)
+        ctx.globalAlpha = 1
+
+        // Thin bright edge on the leading edge of the bar
+        const barW = Math.round(W * pct)
+        ctx.fillStyle = 'rgba(255,180,180,0.6)'
+        ctx.fillRect(Math.max(0, barW - 3), BAR_Y, 3, BAR_H)
+    }
+}
+
 // ── GO flash (no-op — level intro overlay replaced it) ────────────────────────
 let _goUntil = 0
 
-function showGo() { /* countdown done — stream detection starts automatically via isCountdownActive() */ }
+function showGo() {
+    // Countdown done — start the level timer now (used for star rating and timeout bar)
+    _levelStartMs = Date.now()
+}
 
 function drawGoFlash(_ctx) {
     // Visual GO flash replaced by level intro overlay — this is now a no-op.
