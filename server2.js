@@ -6,7 +6,7 @@ const path  = require("path");
 const PORT = 3001;
 
 // Set to true to serve obfuscated build from dist/, false to serve raw source files.
-const SERVE_OBFUSCATED = true;
+const SERVE_OBFUSCATED = false;
 
 const MIME = {
     ".html": "text/html",
